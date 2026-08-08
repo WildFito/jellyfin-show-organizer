@@ -1,0 +1,93 @@
+name: Release ShowOrganizer
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET SDK
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '9.0.x'
+
+    - name: Setup Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install JPRM
+      run: |
+        python -m pip install --upgrade pip
+        pip install jprm==1.1.0
+
+    - name: Extract and Verify Version
+      run: |
+        # Authoritatively extract version from build.yaml
+        VERSION=$(python -c "import yaml; print(yaml.safe_load(open('build.yaml'))['version'])")
+        echo "PLUGIN_VERSION=$VERSION" >> $GITHUB_ENV
+        
+        TAG_NAME="${{ github.event.release.tag_name }}"
+        EXPECTED_TAG="v$VERSION"
+        
+        echo "Release Tag: $TAG_NAME"
+        echo "Expected Tag: $EXPECTED_TAG"
+        
+        if [ "$TAG_NAME" != "$EXPECTED_TAG" ]; then
+          echo "ERROR: Release tag ($TAG_NAME) does not match expected tag format ($EXPECTED_TAG) derived from build.yaml."
+          exit 1
+        fi
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build Release
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Run tests
+      run: dotnet test --configuration Release --no-build
+
+    - name: Package Plugin with JPRM
+      run: |
+        mkdir -p artifacts
+        python -m jprm plugin build . --output=./artifacts
+
+    - name: Upload Release Asset
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        ZIP_FILE="artifacts/showorganizer_${{ env.PLUGIN_VERSION }}.zip"
+        if [ ! -f "$ZIP_FILE" ]; then
+          echo "ERROR: Zip file not found at $ZIP_FILE"
+          exit 1
+        fi
+        gh release upload ${{ github.event.release.tag_name }} "$ZIP_FILE"
+
+    - name: Update Manifest catalog
+      run: |
+        ASSET_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/showorganizer_${{ env.PLUGIN_VERSION }}.zip"
+        python -m jprm repo add --plugin-url "$ASSET_URL" . "artifacts/showorganizer_${{ env.PLUGIN_VERSION }}.zip"
+
+    - name: Commit and Push manifest.json updates
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Checkout the branch main to push the manifest update
+        git checkout main
+        git pull origin main
+        
+        git add manifest.json
+        git commit -m "Update manifest.json for release ${{ env.PLUGIN_VERSION }}"
+        git push origin main
