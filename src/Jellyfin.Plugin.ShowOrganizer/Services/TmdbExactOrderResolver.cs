@@ -25,19 +25,19 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         {
             if (orderRef.Provider != "tmdb")
             {
-                return (customSeasonNumber, customEpisodeNumber);
+                return (-1, -1);
             }
 
             var groupCollection = await _tmdbClientService.GetTvEpisodeGroupsAsync(seriesTmdbId, orderRef.OrderId, language, cancellationToken).ConfigureAwait(false);
             if (groupCollection?.Groups == null)
             {
-                return (customSeasonNumber, customEpisodeNumber);
+                return (-1, -1);
             }
 
             var season = groupCollection.Groups.Find(s => s.Order == customSeasonNumber);
             if (season?.Episodes == null)
             {
-                return (customSeasonNumber, customEpisodeNumber);
+                return (-1, -1);
             }
 
             var episode = season.Episodes.Find(e => e.Order == customEpisodeNumber - 1);
@@ -46,7 +46,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 return (episode.SeasonNumber, episode.EpisodeNumber);
             }
 
-            return (customSeasonNumber, customEpisodeNumber);
+            return (-1, -1);
         }
     }
 }

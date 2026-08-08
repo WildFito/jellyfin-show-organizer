@@ -117,7 +117,6 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return metadataResult;
             }
 
-            // Resolve exact coordinates
             var (resolvedSeason, resolvedEpisode) = await _resolver.ResolveCoordinatesAsync(
                 seriesTmdbId,
                 seasonNumber,
@@ -125,6 +124,17 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 orderRef,
                 info.MetadataLanguage,
                 cancellationToken).ConfigureAwait(false);
+
+            if (resolvedSeason <= 0 || resolvedEpisode <= 0)
+            {
+                _logger.LogWarning("ShowOrganizer: Failed to map custom S{Season:02}E{Episode:02} for series {SeriesId} using group {GroupId}.", seasonNumber, episodeNumber.Value, seriesTmdbId, orderRef.OrderId);
+                metadataResult.HasMetadata = false;
+                metadataResult.Item = null!;
+                return metadataResult;
+            }
+
+            _logger.LogInformation("Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
+            _logger.LogDebug("Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.", seasonNumber, episodeNumber.Value, resolvedSeason, resolvedEpisode, orderRef.OrderId);
 
             TvEpisode? episodeResult = null;
             if (info.IndexNumberEnd.HasValue)

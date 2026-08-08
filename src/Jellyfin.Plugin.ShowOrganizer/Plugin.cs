@@ -19,6 +19,6 @@ namespace Jellyfin.Plugin.ShowOrganizer
 
         public override Guid Id => Guid.Parse("f98bb2d0-ea65-4f36-be5d-ff63d7d7b1d1");
 
-        public static Plugin? Instance { get; private set; }
+        public static Plugin? Instance { get; internal set; }
     }
 }

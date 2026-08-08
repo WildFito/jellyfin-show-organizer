@@ -105,7 +105,7 @@ namespace ReleaseVerifier
                 }
 
                 // Validate other fields
-                var fields = new[] { "name", "guid", "targetAbi", "category", "owner" };
+                var fields = new[] { "name", "guid", "targetAbi", "category", "owner", "imageUrl" };
                 foreach (var field in fields)
                 {
                     string yamlPattern = $@"{field}:\s*[""']?([^""'\r\n]+)[""']?";

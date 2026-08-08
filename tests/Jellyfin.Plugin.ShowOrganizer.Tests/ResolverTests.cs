@@ -1,16 +1,21 @@
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Jellyfin.Plugin.ShowOrganizer.Configuration;
 using Jellyfin.Plugin.ShowOrganizer.Models;
 using Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb;
 using Jellyfin.Plugin.ShowOrganizer.Services;
+using MediaBrowser.Common.Plugins;
 using MediaBrowser.Controller.Entities;
 using MediaBrowser.Controller.Entities.TV;
 using MediaBrowser.Controller.Providers;
 using MediaBrowser.Model.Entities;
+using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Providers;
+using MediaBrowser.Model.Updates;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
@@ -29,8 +34,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
 
             public ICacheEntry CreateEntry(object key)
             {
-                var entry = new TestCacheEntry(key, this);
-                return entry;
+                return new TestCacheEntry(key, this);
             }
 
             public void Remove(object key)
@@ -96,6 +100,11 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             public override Task<TvEpisode?> GetTvEpisodeAsync(int tvShowId, int seasonNumber, int episodeNumber, string? language, string? imageLanguages, string? countryCode, CancellationToken cancellationToken)
             {
                 GetTvEpisodeCalled = true;
+                if (seasonNumber <= 0 || episodeNumber <= 0)
+                {
+                    return Task.FromResult<TvEpisode?>(null);
+                }
+
                 return Task.FromResult<TvEpisode?>(new TvEpisode
                 {
                     Name = $"S{seasonNumber:00}E{episodeNumber:00}",
@@ -130,6 +139,53 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             }
         }
 
+        private class TestTmdbConfig : BasePluginConfiguration
+        {
+            public string TmdbApiKey { get; set; } = "jellyfin_tmdb_key_123";
+        }
+
+        private class TestTmdbPlugin : IPlugin, IHasPluginConfiguration
+        {
+            public string Name => "TheMovieDb";
+            public string Description => "TMDB Provider";
+            public Guid Id => Guid.Parse("f6a9c636-f00e-436b-9c29-450f3815049c");
+            public Version Version => new Version(1, 0, 0);
+            public string AssemblyFilePath => "";
+            public bool CanUninstall => false;
+            public string DataFolderPath => "";
+
+            public Type ConfigurationType => typeof(TestTmdbConfig);
+            public BasePluginConfiguration Configuration { get; set; } = new TestTmdbConfig();
+
+            public PluginInfo GetPluginInfo() => new PluginInfo(Name, Version, Description, Id, CanUninstall);
+            public void OnUninstalling() { }
+            public void UpdateConfiguration(BasePluginConfiguration configuration) { Configuration = configuration; }
+        }
+
+        private class TestPluginManager : IPluginManager
+        {
+            public IReadOnlyList<LocalPlugin> Plugins { get; }
+
+            public TestPluginManager(IPlugin plugin)
+            {
+                var localPlugin = (LocalPlugin)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(LocalPlugin));
+                typeof(LocalPlugin).GetProperty(nameof(LocalPlugin.Instance))?.SetValue(localPlugin, plugin);
+                Plugins = new[] { localPlugin };
+            }
+
+            public void CreatePlugins() { }
+            public IEnumerable<Assembly> LoadAssemblies() => Array.Empty<Assembly>();
+            public void RegisterServices(Microsoft.Extensions.DependencyInjection.IServiceCollection serviceCollection) { }
+            public bool SaveManifest(PluginManifest manifest, string path) => true;
+            public Task<bool> PopulateManifest(PackageInfo package, Version version, string targetPath, PluginStatus status) => Task.FromResult(true);
+            public void ImportPluginFrom(string path) { }
+            public void FailPlugin(Assembly assembly) { }
+            public void DisablePlugin(LocalPlugin plugin) { }
+            public void EnablePlugin(LocalPlugin plugin) { }
+            public LocalPlugin? GetPlugin(Guid id, Version? version = null) => null;
+            public bool RemovePlugin(LocalPlugin plugin) => true;
+        }
+
         [Fact]
         public void ShowOrderReference_TryParse_ValidValues()
         {
@@ -156,8 +212,6 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         [Fact]
         public async Task TmdbExactOrderResolver_DbzKaiBoundaryTests()
         {
-            // Set up Dragon Ball Z Kai mock saga episode groups
-            // S01 = 18, S02 = 36, S03 = 29, S04 = 15, S05 = 24, S06 = 18, S07 = 27 (Total: 167)
             var groupSizes = new[] { 18, 36, 29, 15, 24, 18, 27 };
             var groups = new List<TvGroup>();
             var absoluteEpisodeCounter = 1;
@@ -172,9 +226,9 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 {
                     groupEpisodes.Add(new TvGroupEpisode
                     {
-                        Order = e, // 0-indexed order in group
-                        SeasonNumber = 1, // Original DBZ Kai season on TMDB is S01
-                        EpisodeNumber = absoluteEpisodeCounter++ // Original TMDB episode numbering
+                        Order = e,
+                        SeasonNumber = 1,
+                        EpisodeNumber = absoluteEpisodeCounter++
                     });
                 }
 
@@ -182,7 +236,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 {
                     Id = $"group-id-{seasonNum}",
                     Name = $"Saga {seasonNum}",
-                    Order = seasonNum, // 1-indexed group order matching custom season number
+                    Order = seasonNum,
                     Episodes = groupEpisodes
                 });
             }
@@ -202,33 +256,26 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             var resolver = new TmdbExactOrderResolver(service);
             var orderRef = new ShowOrderReference("tmdb", "648fc7202f8d0900e3864f62");
 
-            // Boundary test mappings
-            // S01E18 -> original 18
             var (s1, ep1) = await resolver.ResolveCoordinatesAsync(61709, 1, 18, orderRef, "en", CancellationToken.None);
             Assert.Equal(1, s1);
             Assert.Equal(18, ep1);
 
-            // S02E01 -> original 19
             var (s2, ep2) = await resolver.ResolveCoordinatesAsync(61709, 2, 1, orderRef, "en", CancellationToken.None);
             Assert.Equal(1, s2);
             Assert.Equal(19, ep2);
 
-            // S02E36 -> original 54
             var (s3, ep3) = await resolver.ResolveCoordinatesAsync(61709, 2, 36, orderRef, "en", CancellationToken.None);
             Assert.Equal(1, s3);
             Assert.Equal(54, ep3);
 
-            // S03E01 -> original 55
             var (s4, ep4) = await resolver.ResolveCoordinatesAsync(61709, 3, 1, orderRef, "en", CancellationToken.None);
             Assert.Equal(1, s4);
             Assert.Equal(55, ep4);
 
-            // S03E29 -> original 83
             var (s5, ep5) = await resolver.ResolveCoordinatesAsync(61709, 3, 29, orderRef, "en", CancellationToken.None);
             Assert.Equal(1, s5);
             Assert.Equal(83, ep5);
 
-            // S04E01 -> original 84
             var (s6, ep6) = await resolver.ResolveCoordinatesAsync(61709, 4, 1, orderRef, "en", CancellationToken.None);
             Assert.Equal(1, s6);
             Assert.Equal(84, ep6);
@@ -252,12 +299,9 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 MetadataCountryCode = "US"
             };
 
-            // Ensure ShowOrganizer ID is NOT present in SeriesProviderIds
             info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
 
             var result = await provider.GetMetadata(info, CancellationToken.None);
-
-            // Should return immediately with HasMetadata = false and without triggering throwing services
             Assert.False(result.HasMetadata);
         }
 
@@ -276,12 +320,124 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 MetadataCountryCode = "US"
             };
 
-            // Ensure ShowOrganizer ID is NOT present in SeriesProviderIds
             info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
 
             var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+        }
 
-            // Should return immediately with HasMetadata = false and without triggering throwing service
+        [Fact]
+        public void TmdbClientService_CredentialFallback_ExplicitOverride()
+        {
+            var cache = new TestMemoryCache();
+            var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
+
+            var plugin = (Plugin)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
+            var config = new PluginConfiguration { TmdbApiKey = "override_key_999" };
+            typeof(Plugin).GetProperty(nameof(Plugin.Configuration))?.SetValue(plugin, config);
+            typeof(Plugin).GetProperty(nameof(Plugin.Instance))?.SetValue(null, plugin);
+
+            try
+            {
+                var key = service.ResolveTmdbApiKey();
+                Assert.Equal("override_key_999", key);
+            }
+            finally
+            {
+                typeof(Plugin).GetProperty(nameof(Plugin.Instance))?.SetValue(null, null);
+            }
+        }
+
+        [Fact]
+        public void TmdbClientService_CredentialFallback_JellyfinPluginManager()
+        {
+            var cache = new TestMemoryCache();
+            var plugin = new TestTmdbPlugin();
+            var pm = new TestPluginManager(plugin);
+
+            var service = new TmdbClientService(cache, pm, NullLogger<TmdbClientService>.Instance);
+            var key = service.ResolveTmdbApiKey();
+
+            Assert.Equal("jellyfin_tmdb_key_123", key);
+        }
+
+        [Fact]
+        public void TmdbClientService_CredentialFallback_NoKeyAvailable_WarningAndGracefulFailure()
+        {
+            var cache = new TestMemoryCache();
+            var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
+            
+            Plugin.Instance?.Configuration?.GetType().GetProperty(nameof(PluginConfiguration.TmdbApiKey))?.SetValue(Plugin.Instance.Configuration, string.Empty);
+
+            var key = service.ResolveTmdbApiKey();
+            Assert.Null(key);
+        }
+
+        [Fact]
+        public async Task ShowOrganizerSeasonProvider_AppliesGroupSeasonNames()
+        {
+            var cache = new TestMemoryCache();
+            var groups = new List<TvGroup>
+            {
+                new TvGroup { Order = 1, Name = "Saiyan Saga" },
+                new TvGroup { Order = 2, Name = "Namek Saga" }
+            };
+
+            var collection = new TvGroupCollection
+            {
+                Id = "69681f95c0c672f8f05b21b4",
+                Name = "Dragon Ball Recut",
+                Groups = groups
+            };
+
+            var mockService = new MockTmdbClientService(cache)
+            {
+                MockGroupCollection = collection
+            };
+
+            var provider = new ShowOrganizerSeasonProvider(mockService, null!, NullLogger<ShowOrganizerSeasonProvider>.Instance);
+
+            var info = new SeasonInfo
+            {
+                IndexNumber = 1,
+                MetadataLanguage = "en"
+            };
+            info.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+
+            Assert.True(result.HasMetadata);
+            Assert.Equal("Saiyan Saga", result.Item.Name);
+            Assert.Equal(1, result.Item.IndexNumber);
+        }
+
+        [Fact]
+        public async Task ShowOrganizerEpisodeProvider_FailedGroupRetrieval_ReturnsNoMetadataWithoutFallback()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache)
+            {
+                MockGroupCollection = null // Group retrieval fails
+            };
+
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo
+            {
+                ParentIndexNumber = 1,
+                IndexNumber = 1,
+                MetadataLanguage = "en"
+            };
+            info.SeriesProviderIds["ShowOrganizer"] = "tmdb:invalid_group_id";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+
+            var defaultResult = new MetadataResult<Episode>();
+            Assert.False(defaultResult.HasMetadata);
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+
             Assert.False(result.HasMetadata);
         }
     }

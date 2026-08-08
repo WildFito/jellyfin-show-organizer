@@ -26,19 +26,32 @@ graph TD
     H --> I[Return metadata to Jellyfin under custom SxxExx]
 ```
 
-## TMDB Adapter & Caching
+## TMDB Credentials & Fallback Hierarchy
 
-The plugin features a decoupled `TmdbClientService` that maintains a private `TMDbClient` instance.
+`TmdbClientService` automatically resolves TMDb credentials without requiring manual user setup:
 
-* **API Key**: Read from ShowOrganizer's own configuration (`PluginConfiguration.TmdbApiKey`).
-* **Caching**: The retrieved `TvGroupCollection` mappings are cached using the server's shared `IMemoryCache` (injected via dependency injection).
-  * Cache key structure: `$"group-{tvShowId}-{groupId}-{language}"`
-  * Cache duration: `1` hour.
-  * Null or failed responses are never cached.
+1. **Explicit Override**: Checks if `PluginConfiguration.TmdbApiKey` is explicitly configured in ShowOrganizer.
+2. **Jellyfin TMDb Reuse**: If empty, checks Jellyfin's `IPluginManager` for the built-in TMDb plugin configuration and reuses Jellyfin's TMDb API key.
+3. **Warning**: If neither source contains an API key, logs a warning (`No usable TMDb API credentials are available`).
+
+*Note: API keys are never logged.*
+
+## Diagnostics & Logging
+
+ShowOrganizer provides structured diagnostic logging:
+* **Activation**: Logs `INFO` when activated for a series.
+* **Retrieval**: Logs `INFO` once upon retrieving an episode group from TMDb API.
+* **Cache Hits**: Logged at `DEBUG` level.
+* **Per-Episode Mapping**: Logged at `DEBUG` level (e.g. `Mapped custom S02E03 -> TMDb S01E18 using group 6968...`).
+* **Failures**: Logs `WARN` with series ID, group ID, and status error without leaking API keys.
+
+## Season Artwork Note
+
+TMDb Episode Group endpoints (`TvGroupCollection` and `TvGroup`) contain subgroup ordering and custom titles (such as saga names), but do **not** expose subgroup/saga poster artwork in TMDb's API schema. Therefore, ShowOrganizer does not fabricate artwork mappings to canonical TMDb season posters. Custom saga/episode-group artwork should be provided via local image files or local NFO metadata.
 
 ## Preservation of Custom Numbering
 
-To ensure physical media files do not need renaming and are not misaligned in the user's library:
+To ensure physical media files do not need renaming:
 - ShowOrganizer queries TMDB using the resolved original season/episode numbering coordinates.
 - However, the returned metadata properties on the `Episode` item are explicitly assigned to match the original user coordinates:
   - `ParentIndexNumber = info.ParentIndexNumber`
