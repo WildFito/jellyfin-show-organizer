@@ -1,6 +1,6 @@
 name: "ShowOrganizer"
 guid: "f98bb2d0-ea65-4f36-be5d-ff63d7d7b1d1"
-version: "0.1.1.0"
+version: "0.1.2.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 category: "Metadata"
@@ -10,4 +10,4 @@ description: "A Jellyfin metadata provider plugin that allows users to specify a
 imageUrl: "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png"
 artifacts:
   - "Jellyfin.Plugin.ShowOrganizer.dll"
-changelog: "Reuse Jellyfin TMDb credentials by default, exact Episode Group mapping fix, diagnostic logging improvements, and custom branding logo."
+changelog: "Fix TMDb credential fallback to mirror Jellyfin's resolution chain (including TmdbUtils.ApiKey) and deduplicate missing client warning logs."
