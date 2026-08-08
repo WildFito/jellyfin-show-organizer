@@ -86,7 +86,8 @@ jobs:
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
         # Tag the exact SHA of the runner workspace checkout
-        git tag -a "v${{ env.VERSION }}" -m "ShowOrganizer ${{ env.VERSION }}"
+        git tag -a "v${{ env.VERSION }}" "$GITHUB_SHA" \
+          -m "ShowOrganizer ${{ env.VERSION }}"
         git push origin "v${{ env.VERSION }}"
 
     - name: Create GitHub Release and Upload Asset
