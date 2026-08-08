@@ -139,6 +139,11 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             }
         }
 
+        public static class TmdbUtils
+        {
+            public static string? ApiKey { get; set; } = "jellyfin_bundled_utils_key_777";
+        }
+
         private class TestTmdbConfig : BasePluginConfiguration
         {
             public string TmdbApiKey { get; set; } = "jellyfin_tmdb_key_123";
@@ -362,15 +367,40 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
+        public void TmdbClientService_CredentialFallback_RealJellyfinState_TmdbUtilsApiKeyAvailable()
+        {
+            var cache = new TestMemoryCache();
+            // ShowOrganizer key is empty
+            // Jellyfin PluginConfiguration.TmdbApiKey is empty
+            var emptyPlugin = new TestTmdbPlugin();
+            ((TestTmdbConfig)emptyPlugin.Configuration).TmdbApiKey = string.Empty;
+            var pm = new TestPluginManager(emptyPlugin);
+
+            var service = new TmdbClientService(cache, pm, NullLogger<TmdbClientService>.Instance);
+            var key = service.ResolveTmdbApiKey();
+
+            // Should resolve TmdbUtils.ApiKey from loaded assembly
+            Assert.Equal("jellyfin_bundled_utils_key_777", key);
+        }
+
+        [Fact]
         public void TmdbClientService_CredentialFallback_NoKeyAvailable_WarningAndGracefulFailure()
         {
             var cache = new TestMemoryCache();
             var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
-            
-            Plugin.Instance?.Configuration?.GetType().GetProperty(nameof(PluginConfiguration.TmdbApiKey))?.SetValue(Plugin.Instance.Configuration, string.Empty);
 
-            var key = service.ResolveTmdbApiKey();
-            Assert.Null(key);
+            var oldKey = TmdbUtils.ApiKey;
+            TmdbUtils.ApiKey = null;
+
+            try
+            {
+                var key = service.ResolveTmdbApiKey();
+                Assert.Null(key);
+            }
+            finally
+            {
+                TmdbUtils.ApiKey = oldKey;
+            }
         }
 
         [Fact]

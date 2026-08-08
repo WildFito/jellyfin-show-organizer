@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
@@ -92,46 +93,112 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
         private string? GetJellyfinTmdbApiKey()
         {
-            if (_pluginManager == null)
+            if (_pluginManager != null)
             {
-                return null;
+                try
+                {
+                    foreach (var localPlugin in _pluginManager.Plugins)
+                    {
+                        var instance = localPlugin.Instance;
+                        if (instance == null)
+                        {
+                            continue;
+                        }
+
+                        if (instance.Name.Contains("MovieDb", StringComparison.OrdinalIgnoreCase) ||
+                            instance.Name.Contains("TMDB", StringComparison.OrdinalIgnoreCase))
+                        {
+                            if (instance is IHasPluginConfiguration configPlugin)
+                            {
+                                var config = configPlugin.Configuration;
+                                if (config != null)
+                                {
+                                    var prop = config.GetType().GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                                    if (prop != null)
+                                    {
+                                        var val = prop.GetValue(config) as string;
+                                        if (!string.IsNullOrWhiteSpace(val))
+                                        {
+                                            return val;
+                                        }
+                                    }
+                                }
+                            }
+
+                            var keyFromAsm = GetApiKeyFromAssembly(instance.GetType().Assembly);
+                            if (!string.IsNullOrWhiteSpace(keyFromAsm))
+                            {
+                                return keyFromAsm;
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogDebug(ex, "Error checking Jellyfin TMDb plugin configuration.");
+                }
             }
 
             try
             {
-                foreach (var localPlugin in _pluginManager.Plugins)
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    var instance = localPlugin.Instance;
-                    if (instance == null)
+                    var keyFromAsm = GetApiKeyFromAssembly(asm);
+                    if (!string.IsNullOrWhiteSpace(keyFromAsm))
                     {
-                        continue;
-                    }
-
-                    if (instance.Name.Contains("MovieDb", StringComparison.OrdinalIgnoreCase) ||
-                        instance.Name.Contains("TMDB", StringComparison.OrdinalIgnoreCase))
-                    {
-                        if (instance is IHasPluginConfiguration configPlugin)
-                        {
-                            var config = configPlugin.Configuration;
-                            if (config != null)
-                            {
-                                var prop = config.GetType().GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                                if (prop != null)
-                                {
-                                    var val = prop.GetValue(config) as string;
-                                    if (!string.IsNullOrWhiteSpace(val))
-                                    {
-                                        return val;
-                                    }
-                                }
-                            }
-                        }
+                        return keyFromAsm;
                     }
                 }
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "Error checking Jellyfin TMDb plugin configuration.");
+                _logger?.LogDebug(ex, "Error checking AppDomain assemblies for TMDb credentials.");
+            }
+
+            return null;
+        }
+
+        private static string? GetApiKeyFromAssembly(Assembly asm)
+        {
+            try
+            {
+                var type = asm.GetType("MediaBrowser.Providers.Plugins.Tmdb.TmdbUtils")
+                        ?? asm.GetType("MediaBrowser.Providers.Tmdb.TmdbUtils")
+                        ?? asm.GetTypes().FirstOrDefault(t => t.Name.Equals("TmdbUtils", StringComparison.OrdinalIgnoreCase));
+
+                if (type == null)
+                {
+                    return null;
+                }
+
+                var prop = type.GetProperty("ApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                        ?? type.GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+                if (prop != null)
+                {
+                    var val = prop.GetValue(null) as string;
+                    if (!string.IsNullOrWhiteSpace(val))
+                    {
+                        return val;
+                    }
+                }
+
+                var field = type.GetField("ApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                         ?? type.GetField("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                         ?? type.GetField("API_KEY", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+                if (field != null)
+                {
+                    var val = field.GetValue(null) as string;
+                    if (!string.IsNullOrWhiteSpace(val))
+                    {
+                        return val;
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore type load / reflection errors
             }
 
             return null;
@@ -151,7 +218,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             var client = GetClient();
             if (client == null)
             {
-                _logger?.LogWarning("Failed to retrieve TMDb episode group {GroupId} for series {SeriesId}: No usable TMDb client.", groupId, tvShowId);
+                _logger?.LogDebug("Skipping TMDb episode group retrieval for series {SeriesId}: No usable TMDb client.", tvShowId);
                 return null;
             }
 
