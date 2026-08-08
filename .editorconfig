@@ -1,0 +1,21 @@
+root = true
+
+[*]
+indent_style = space
+indent_size = 4
+insert_final_newline = true
+charset = utf-8
+trim_trailing_whitespace = true
+
+[*.cs]
+# Organization settings
+dotnet_sort_system_directives_first = true
+
+# Formatting - spacing settings
+csharp_space_after_cast = false
+csharp_space_after_keywords_in_control_flow_statements = true
+csharp_space_between_parentheses_of_control_flow_statements = false
+
+# Formatting - wrapping settings
+csharp_preserve_single_line_blocks = true
+csharp_preserve_single_line_index_parameters = true
