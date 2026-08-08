@@ -1,8 +1,7 @@
 name: Release ShowOrganizer
 
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -30,24 +29,37 @@ jobs:
     - name: Install JPRM
       run: |
         python -m pip install --upgrade pip
-        pip install jprm==1.1.0
+        pip install jprm==1.1.0 PyYAML
 
-    - name: Extract and Verify Version
+    - name: Extract Version
       run: |
-        # Authoritatively extract version from build.yaml
         VERSION=$(python -c "import yaml; print(yaml.safe_load(open('build.yaml'))['version'])")
-        echo "PLUGIN_VERSION=$VERSION" >> $GITHUB_ENV
-        
-        TAG_NAME="${{ github.event.release.tag_name }}"
-        EXPECTED_TAG="v$VERSION"
-        
-        echo "Release Tag: $TAG_NAME"
-        echo "Expected Tag: $EXPECTED_TAG"
-        
-        if [ "$TAG_NAME" != "$EXPECTED_TAG" ]; then
-          echo "ERROR: Release tag ($TAG_NAME) does not match expected tag format ($EXPECTED_TAG) derived from build.yaml."
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Extracted version: $VERSION"
+
+    - name: Pre-flight Verification
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # 1. Verify running on main branch
+        if [ "${{ github.ref }}" != "refs/heads/main" ]; then
+          echo "ERROR: Release workflow must be triggered from the main branch."
           exit 1
         fi
+
+        # 2. Verify git tag does not already exist
+        if [ -n "$(git ls-remote --tags origin refs/tags/v${{ env.VERSION }})" ]; then
+          echo "ERROR: Git tag v${{ env.VERSION }} already exists on origin."
+          exit 1
+        fi
+
+        # 3. Verify GitHub release does not already exist
+        if gh release view "v${{ env.VERSION }}" >/dev/null 2>&1; then
+          echo "ERROR: GitHub release for v${{ env.VERSION }} already exists."
+          exit 1
+        fi
+
+        echo "Pre-flight checks passed: version v${{ env.VERSION }} is available for release."
 
     - name: Restore dependencies
       run: dotnet restore
@@ -63,31 +75,46 @@ jobs:
         mkdir -p artifacts
         python -m jprm plugin build . --output=./artifacts
 
-    - name: Upload Release Asset
+    - name: Validate Package
+      run: |
+        # Run local custom ReleaseVerifier to inspect ZIP and meta.json parameters
+        dotnet run --project tools/ReleaseVerifier/ReleaseVerifier.csproj "artifacts/showorganizer_${{ env.VERSION }}.zip" build.yaml
+
+    - name: Push Git Tag
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        
+        # Tag the exact SHA of the runner workspace checkout
+        git tag -a "v${{ env.VERSION }}" -m "ShowOrganizer ${{ env.VERSION }}"
+        git push origin "v${{ env.VERSION }}"
+
+    - name: Create GitHub Release and Upload Asset
       env:
         GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        ZIP_FILE="artifacts/showorganizer_${{ env.PLUGIN_VERSION }}.zip"
-        if [ ! -f "$ZIP_FILE" ]; then
-          echo "ERROR: Zip file not found at $ZIP_FILE"
-          exit 1
-        fi
-        gh release upload ${{ github.event.release.tag_name }} "$ZIP_FILE"
+        # Read the changelog dynamically from build.yaml
+        CHANGELOG=$(python -c "import yaml; print(yaml.safe_load(open('build.yaml'))['changelog'])")
+        
+        gh release create "v${{ env.VERSION }}" \
+          --title "ShowOrganizer ${{ env.VERSION }}" \
+          --notes "$CHANGELOG" \
+          "artifacts/showorganizer_${{ env.VERSION }}.zip"
 
-    - name: Update Manifest catalog
+    - name: Update manifest.json
       run: |
-        ASSET_URL="https://github.com/${{ github.repository }}/releases/download/${{ github.event.release.tag_name }}/showorganizer_${{ env.PLUGIN_VERSION }}.zip"
-        python -m jprm repo add --plugin-url "$ASSET_URL" . "artifacts/showorganizer_${{ env.PLUGIN_VERSION }}.zip"
+        ASSET_URL="https://github.com/${{ github.repository }}/releases/download/v${{ env.VERSION }}/showorganizer_${{ env.VERSION }}.zip"
+        python -m jprm repo add --plugin-url "$ASSET_URL" . "artifacts/showorganizer_${{ env.VERSION }}.zip"
 
     - name: Commit and Push manifest.json updates
       run: |
         git config --global user.name "github-actions[bot]"
         git config --global user.email "github-actions[bot]@users.noreply.github.com"
         
-        # Checkout the branch main to push the manifest update
+        # Switch to branch main to commit manifest updates
         git checkout main
         git pull origin main
         
         git add manifest.json
-        git commit -m "Update manifest.json for release ${{ env.PLUGIN_VERSION }}"
+        git commit -m "Update manifest for ShowOrganizer ${{ env.VERSION }}"
         git push origin main
