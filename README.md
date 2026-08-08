@@ -1,5 +1,9 @@
 # ShowOrganizer Jellyfin Plugin
 
+[![Build ShowOrganizer](https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml/badge.svg)](https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml)
+[![GitHub Release](https://img.shields.io/github/v/release/WildFito/jellyfin-show-organizer)](https://github.com/WildFito/jellyfin-show-organizer/releases)
+[![License](https://img.shields.io/github/license/WildFito/jellyfin-show-organizer)](LICENSE)
+
 ShowOrganizer is a metadata provider plugin for Jellyfin Server that overrides built-in episode ordering logic to support exact episode groups, while preserving local custom numbering.
 
 ## What It Does
@@ -23,8 +27,24 @@ ShowOrganizer addresses this limitation by letting users configure the exact TMD
 
 ## Supported Versions & Providers
 
-* **Supported Jellyfin Server Version**: 10.11.11
+* **Supported Jellyfin Server Version**: 10.11.x (currently built and tested against **10.11.11**, targetAbi `10.11.0.0`)
 * **Supported Metadata Providers**: TMDB (The Movie Database)
+
+## TMDB API Key Configuration
+
+Because the plugin does not include a custom settings UI, the TMDB API key must be configured in the plugin's configuration file:
+
+1. Stop your Jellyfin server.
+2. Locate the ShowOrganizer configuration file under your Jellyfin configuration directory at:
+   `plugins/configurations/Jellyfin.Plugin.ShowOrganizer.xml`
+3. If it does not exist, create the file with the following contents, replacing `YOUR_TMDB_API_KEY` with your actual TMDB API key:
+   ```xml
+   <?xml version="1.0" encoding="utf-8"?>
+   <PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+     <TmdbApiKey>YOUR_TMDB_API_KEY</TmdbApiKey>
+   </PluginConfiguration>
+   ```
+4. Start your Jellyfin server.
 
 ## NFO Configuration Example
 
@@ -39,6 +59,30 @@ To enable ShowOrganizer for a series, write the group ID in the series level NFO
 ```
 
 Alternatively, configure the value in the Jellyfin web interface under **Edit Metadata -> External IDs -> ShowOrganizer** with: `tmdb:648fc7202f8d0900e3864f62`.
+
+## Repository Installation
+
+To add the ShowOrganizer plugin catalog repository to your Jellyfin server:
+
+1. Go to **Dashboard -> Plugins** in your Jellyfin administrator panel.
+2. Select the **Repositories** tab (or click **Manage Repositories**).
+3. Click **Add** to add a new repository catalog.
+4. Set the following values:
+   * **Repository Name**: `ShowOrganizer`
+   * **Repository URL**: `https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/manifest.json`
+5. Save, then select the **Catalog** tab.
+6. Find and click on **ShowOrganizer**, then click **Install**.
+7. Restart your Jellyfin server.
+
+## Manual Installation
+
+1. Build the project in Release mode.
+2. Locate the compiled plugin DLL file `Jellyfin.Plugin.ShowOrganizer.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net9.0/`.
+3. Create a folder named `ShowOrganizer` inside your Jellyfin server's `plugins/` directory:
+   ```bash
+   mkdir -p /path/to/jellyfin/config/plugins/ShowOrganizer
+   ```
+4. Copy `Jellyfin.Plugin.ShowOrganizer.dll` into the directory and restart your Jellyfin server.
 
 ## Build & Test Instructions
 
@@ -59,20 +103,6 @@ To run the unit and integration test suite:
 dotnet test
 ```
 *(If your host SDK is higher than Net 9, configure roll-forward: `$env:DOTNET_ROLL_FORWARD="Major"; dotnet test`)*
-
-## Manual Installation
-
-1. Build the project in Release mode.
-2. Locate the compiled `Jellyfin.Plugin.ShowOrganizer.dll` and `TMDbLib.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net9.0/`.
-3. Create a folder named `ShowOrganizer` inside your Jellyfin server's `plugins/` directory:
-   ```bash
-   mkdir -p /path/to/jellyfin/config/plugins/ShowOrganizer
-   ```
-4. Copy the compiled DLLs into it and restart your Jellyfin server.
-
-## Repository Installation (Future)
-
-Add the URL of the hosted `manifest.json` file under **Dashboard -> Plugins -> Repositories** to install and update ShowOrganizer from Jellyfin's Plugin Catalog.
 
 ## Documentation Links
 

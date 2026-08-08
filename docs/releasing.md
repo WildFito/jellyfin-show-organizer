@@ -1,33 +1,71 @@
 # Release and Packaging Guide
 
-This guide details the release process, packaging standards, and repository manifest management for the ShowOrganizer plugin.
+This document describes the release procedure and packaging automation for ShowOrganizer. All releases are automated using GitHub Actions and the Jellyfin Plugin Repository Manager (JPRM).
 
-## Configuration Profiles
+## Release Contract
 
-### build.yaml
-The `build.yaml` file defines the plugin identity, target environments, and build rules. It is located at the root of the repository and is consumed by build tools like the Jellyfin Plugin Repository Manager (JPRM).
+Our release process enforces a strict consistency contract between the metadata version, git tags, and release archives.
 
-Important properties:
-* **name**: "ShowOrganizer"
-* **guid**: Must remain stable (`f98bb2d0-ea65-4f36-be5d-ff63d7d7b1d1`) so that user updates do not break.
-* **targetAbi**: Set to `10.11.0.0` to target Jellyfin v10.11 server environments.
+* **Authoritative Source**: The version defined in `build.yaml` (under `version: "X.X.X.X"`) is the single source of truth.
+* **Tag Naming**: Git tags must be prefixed with a `v` followed by the exact version (e.g. `v0.1.0.0`).
+* **Workflow Validation**: The release workflow will fail if the Git tag (without the leading `v`) does not match the version string in `build.yaml`.
 
-### manifest.json
-The `manifest.json` file is a manifest catalog listing all available releases of the plugin. This is hosted in a public location and configured in the Jellyfin Dashboard under **Plugins -> Repositories** so users can install and update the plugin directly from the catalog.
+---
 
-## Packaging Releases (JPRM)
+## Release Procedure
 
-To package a new release:
+Follow these steps to publish a new release of the plugin:
 
-1. Update the version number in `build.yaml` and the assembly file.
-2. Use JPRM to package the binaries:
+### 1. Preparation
+1. Decide on a new four-part version number (e.g. `0.1.0.0`).
+2. Update the `version` property in `build.yaml` to the new version string (e.g. `version: "0.1.0.0"`).
+3. Update the `changelog` property in `build.yaml` with concise, user-facing release notes for the new version.
+4. Commit and push the changes to `main`:
    ```bash
-   jprm pack
+   git add build.yaml
+   git commit -m "Bump version to 0.1.0.0 and update changelog"
+   git push origin main
    ```
-3. This creates a release zip archive containing the plugin dlls and generates/updates the catalog metadata.
-4. Update the repository `manifest.json` with the new release entry, which includes:
-   * Plugin GUID and version.
-   * Target server ABI version (`10.11.0.0`).
-   * Source download URL.
-   * SHA-256 checksum.
-   * Changelog.
+5. Wait for the standard push CI workflow (`build.yml`) to pass on GitHub.
+
+### 2. Tagging and Publishing
+1. Create a local Git tag matching the new version:
+   ```bash
+   git tag v0.1.0.0
+   ```
+2. Push the tag to GitHub:
+   ```bash
+   git push origin v0.1.0.0
+   ```
+3. Go to your GitHub repository under **Releases -> Draft a new release**:
+   * Select the tag you just pushed (`v0.1.0.0`).
+   * Set the Release Title to `ShowOrganizer 0.1.0.0`.
+   * Add release notes listing major features, bug fixes, and compatibility requirements.
+   * Click **Publish release**.
+
+### 3. Automated Execution
+Once the release is published, the `.github/workflows/release.yml` workflow triggers:
+1. Validates the tag name (`v0.1.0.0`) against the version inside `build.yaml` (`0.1.0.0`).
+2. Compiles and runs all unit tests in Release mode.
+3. Packages the runtime files using JPRM (`showorganizer_0.1.0.0.zip` containing only `Jellyfin.Plugin.ShowOrganizer.dll` and `meta.json`).
+4. Uploads the zip archive to the newly created GitHub Release assets.
+5. Updates the repository catalog `manifest.json` with the new version entry.
+6. Commits and pushes the updated `manifest.json` back to `main` as `github-actions[bot]`.
+
+### 4. Verification
+1. Verify that `manifest.json` on `main` contains the new release entry with the correct download URL, checksum, and timestamp.
+2. Confirm the plugin installs successfully via the Jellyfin catalog using the repository URL:
+   `https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/manifest.json`
+
+---
+
+## Recovering from Release Failures
+
+If the release workflow fails midway (e.g. due to build error, tag mismatch, or network issue):
+
+1. **Delete the GitHub Release**: Go to GitHub Releases, select the failed release, and click **Delete**.
+2. **Delete the Git Tag**:
+   * Delete locally: `git tag -d v0.1.0.0`
+   * Delete on remote: `git push origin --delete v0.1.0.0`
+3. **Fix the Issue**: Commit any code fixes to `main`.
+4. **Retry**: Redo the tagging and publishing steps above.
