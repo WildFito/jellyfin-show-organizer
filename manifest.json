@@ -6,7 +6,16 @@
         "overview": "Override built-in metadata providers to organize and map TV shows using exact TMDB episode group orderings.",
         "owner": "WildFito",
         "category": "Metadata",
+        "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",
         "versions": [
+            {
+                "version": "0.1.1.0",
+                "changelog": "Reuse Jellyfin TMDb credentials by default, exact Episode Group mapping fix, diagnostic logging improvements, and custom branding logo.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/WildFito/jellyfin-show-organizer/releases/download/v0.1.1.0/showorganizer_0.1.1.0.zip",
+                "checksum": "905a07ca56a45beb561bc06c8bc088c2",
+                "timestamp": "2026-08-08T23:31:36Z"
+            },
             {
                 "version": "0.1.0.0",
                 "changelog": "Initial MVP release with TMDB episode group mapping and season name mapping.",
