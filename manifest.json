@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",
         "versions": [
             {
+                "version": "0.1.2.0",
+                "changelog": "Fix TMDb credential fallback to mirror Jellyfin's resolution chain (including TmdbUtils.ApiKey) and deduplicate missing client warning logs.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/WildFito/jellyfin-show-organizer/releases/download/v0.1.2.0/showorganizer_0.1.2.0.zip",
+                "checksum": "3e2bd47710e8b7ac5fdbf7773d5b8ff0",
+                "timestamp": "2026-08-08T23:54:38Z"
+            },
+            {
                 "version": "0.1.1.0",
                 "changelog": "Reuse Jellyfin TMDb credentials by default, exact Episode Group mapping fix, diagnostic logging improvements, and custom branding logo.",
                 "targetAbi": "10.11.0.0",
