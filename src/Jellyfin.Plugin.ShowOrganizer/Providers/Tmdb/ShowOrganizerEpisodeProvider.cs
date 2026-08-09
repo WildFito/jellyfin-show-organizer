@@ -24,11 +24,13 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
     public class ShowOrganizerEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
     {
         private static readonly ConcurrentDictionary<string, bool> _activatedSeriesGroups = new();
+        private static readonly ConcurrentDictionary<string, bool> _loggedFailedMappings = new();
 
         public static int ResetState(ILogger? logger = null)
         {
-            var count = _activatedSeriesGroups.Count;
+            var count = _activatedSeriesGroups.Count + _loggedFailedMappings.Count;
             _activatedSeriesGroups.Clear();
+            _loggedFailedMappings.Clear();
             logger?.LogInformation("ShowOrganizer: Clearing static provider state during plugin shutdown. Entries cleared={Count}", count);
             return count;
         }
@@ -138,7 +140,13 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
 
             if (resolvedSeason <= 0 || resolvedEpisode <= 0)
             {
-                _logger.LogWarning("ShowOrganizer: Failed to map custom S{Season:02}E{Episode:02} for series {SeriesId} using group {GroupId}.", seasonNumber, episodeNumber.Value, seriesTmdbId, orderRef.OrderId);
+                var failKey = $"{seriesTmdbId}:{orderRef.OrderId}:S{seasonNumber}E{episodeNumber.Value}";
+                if (_loggedFailedMappings.TryAdd(failKey, true))
+                {
+                    _logger.LogWarning(
+                        "ShowOrganizer: Failed to map custom S{Season:02}E{Episode:02} (End={IndexEnd}, Lang={Lang}, Country={Country}) for series TMDb {SeriesId} using group {GroupId}.",
+                        seasonNumber, episodeNumber.Value, info.IndexNumberEnd, info.MetadataLanguage, info.MetadataCountryCode, seriesTmdbId, orderRef.OrderId);
+                }
                 metadataResult.HasMetadata = false;
                 metadataResult.Item = null!;
                 return metadataResult;
@@ -147,7 +155,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
             var activationKey = $"{seriesTmdbId}:{orderRef.OrderId}";
             if (_activatedSeriesGroups.TryAdd(activationKey, true))
             {
-                _logger.LogInformation("Activated for series (TMDb {TmdbId}) using episode group \"{GroupId}\".", seriesTmdbId, orderRef.OrderId);
+                _logger.LogInformation("Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
             }
             _logger.LogDebug("Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.", seasonNumber, episodeNumber.Value, resolvedSeason, resolvedEpisode, orderRef.OrderId);
 

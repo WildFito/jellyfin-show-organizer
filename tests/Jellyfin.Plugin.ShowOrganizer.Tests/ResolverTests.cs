@@ -243,7 +243,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 {
                     Id = $"group-id-{seasonNum}",
                     Name = $"Saga {seasonNum}",
-                    Order = i,
+                    Order = seasonNum, // 1-based group order
                     Episodes = groupEpisodes
                 });
             }
@@ -527,7 +527,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                     {
                         new TvGroup
                         {
-                            Order = 0,
+                            Order = 1,
                             Episodes = new List<TvGroupEpisode>
                             {
                                 new TvGroupEpisode { Order = 0, SeasonNumber = 1, EpisodeNumber = 1 }
@@ -564,8 +564,8 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             var cache = new TestMemoryCache();
             var groups = new List<TvGroup>
             {
-                new TvGroup { Order = 0, Name = "Saiyan Saga" },
-                new TvGroup { Order = 1, Name = "Namek Saga" }
+                new TvGroup { Order = 1, Name = "Saiyan Saga" },
+                new TvGroup { Order = 2, Name = "Namek Saga" }
             };
 
             var collection = new TvGroupCollection
@@ -598,7 +598,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
-        public async Task SeasonMapping_ZeroBasedOrder_Season1ToOrder0_Season2ToOrder1_Season9ToOrder8()
+        public async Task SeasonMapping_1BasedOrder_Season1ToOrder1_Season2ToOrder2_Season9ToOrder9()
         {
             var cache = new TestMemoryCache();
             var sagas = new[]
@@ -610,7 +610,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
 
             var groups = sagas.Select((sagaName, idx) => new TvGroup
             {
-                Order = idx,
+                Order = idx + 1, // 1-based TMDb group order
                 Name = sagaName,
                 Episodes = new List<TvGroupEpisode>
                 {
@@ -633,15 +633,15 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             var resolver = new TmdbExactOrderResolver(mockService);
             var orderRef = new ShowOrderReference("tmdb", "69681f95c0c672f8f05b21b4");
 
-            // Season 1 -> Group Order 0
+            // Season 1 -> Group Order 1
             var s1 = await resolver.ResolveCoordinatesAsync(12609, 1, 1, orderRef, "en", CancellationToken.None);
             Assert.Equal((1, 101), s1);
 
-            // Season 2 -> Group Order 1
+            // Season 2 -> Group Order 2
             var s2 = await resolver.ResolveCoordinatesAsync(12609, 2, 1, orderRef, "en", CancellationToken.None);
             Assert.Equal((2, 101), s2);
 
-            // Season 9 -> Group Order 8
+            // Season 9 -> Group Order 9
             var s9 = await resolver.ResolveCoordinatesAsync(12609, 9, 1, orderRef, "en", CancellationToken.None);
             Assert.Equal((9, 101), s9);
 
@@ -654,83 +654,19 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
-        public async Task EpisodeResolution_ZeroBasedOrder_PreservesCustomJellyfinNumbering()
-        {
-            var cache = new TestMemoryCache();
-            var groups = new List<TvGroup>();
-            for (int g = 0; g < 9; g++)
-            {
-                groups.Add(new TvGroup
-                {
-                    Order = g,
-                    Name = $"Saga {g + 1}",
-                    Episodes = new List<TvGroupEpisode>
-                    {
-                        new TvGroupEpisode { Order = 0, SeasonNumber = g + 10, EpisodeNumber = 99 }
-                    }
-                });
-            }
-
-            var collection = new TvGroupCollection
-            {
-                Id = "69681f95c0c672f8f05b21b4",
-                Name = "Dragon Ball Recut",
-                Groups = groups
-            };
-
-            var mockService = new MockTmdbClientService(cache)
-            {
-                MockGroupCollection = collection
-            };
-
-            var resolver = new TmdbExactOrderResolver(mockService);
-            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
-
-            // Custom S01E01 resolves through Group Order 0, Episode Order 0
-            var infoS01 = new EpisodeInfo
-            {
-                ParentIndexNumber = 1,
-                IndexNumber = 1,
-                MetadataLanguage = "en"
-            };
-            infoS01.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
-            infoS01.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
-
-            var resS01 = await provider.GetMetadata(infoS01, CancellationToken.None);
-            Assert.True(resS01.HasMetadata);
-            Assert.Equal(1, resS01.Item.ParentIndexNumber);
-            Assert.Equal(1, resS01.Item.IndexNumber);
-
-            // Custom S09E01 resolves through Group Order 8, Episode Order 0
-            var infoS09 = new EpisodeInfo
-            {
-                ParentIndexNumber = 9,
-                IndexNumber = 1,
-                MetadataLanguage = "en"
-            };
-            infoS09.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
-            infoS09.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
-
-            var resS09 = await provider.GetMetadata(infoS09, CancellationToken.None);
-            Assert.True(resS09.HasMetadata);
-            Assert.Equal(9, resS09.Item.ParentIndexNumber);
-            Assert.Equal(1, resS09.Item.IndexNumber);
-        }
-
-        [Fact]
-        public async Task SeasonProvider_All9Groups_ReturnsHasMetadataAndMatchingName()
+        public async Task SeasonMapping_RealGroupOrder_Season1ToOrder1_Season9ToOrder9()
         {
             var cache = new TestMemoryCache();
             var sagas = new[]
             {
                 "Emperor Pilaf Saga", "Tournament Saga", "Red Ribbon Army Saga",
-                "General Blue Saga", "Commander Red Saga", "Fortuneteller Baba Saga",
+                "General Blue Saga", "Commander Red Saga", "Fortune Teller Baba Saga",
                 "Tien Shinhan Saga", "King Piccolo Saga", "Piccolo Jr. Saga"
             };
 
             var groups = sagas.Select((sagaName, idx) => new TvGroup
             {
-                Order = idx,
+                Order = idx + 1, // TMDb 1-based group order (Order 1..9)
                 Name = sagaName
             }).ToList();
 
@@ -764,6 +700,96 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 Assert.Equal(seasonNumber, result.Item.IndexNumber);
                 Assert.Equal(sagas[seasonNumber - 1], result.Item.Name);
             }
+        }
+
+        [Fact]
+        public async Task EpisodeResolution_BoundaryTests_PreservesCustomJellyfinNumbering()
+        {
+            var cache = new TestMemoryCache();
+            var groups = new List<TvGroup>();
+            for (int g = 1; g <= 9; g++)
+            {
+                groups.Add(new TvGroup
+                {
+                    Order = g, // 1-based TMDb group order (Group 1..9)
+                    Name = $"Saga {g}",
+                    Episodes = new List<TvGroupEpisode>
+                    {
+                        new TvGroupEpisode { Order = 0, SeasonNumber = g, EpisodeNumber = 101 }, // First ep
+                        new TvGroupEpisode { Order = 1, SeasonNumber = g, EpisodeNumber = 102 }, // Mid ep
+                        new TvGroupEpisode { Order = 2, SeasonNumber = g, EpisodeNumber = 103 }  // Last ep
+                    }
+                });
+            }
+
+            var collection = new TvGroupCollection
+            {
+                Id = "69681f95c0c672f8f05b21b4",
+                Name = "Dragon Ball Recut",
+                Groups = groups
+            };
+
+            var mockService = new MockTmdbClientService(cache)
+            {
+                MockGroupCollection = collection
+            };
+
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            // Season 1 First Episode (S01E01) -> Group Order 1, Episode Order 0
+            var infoS01First = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            infoS01First.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            infoS01First.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+            var resS01First = await provider.GetMetadata(infoS01First, CancellationToken.None);
+            Assert.True(resS01First.HasMetadata);
+            Assert.Equal(1, resS01First.Item.ParentIndexNumber);
+            Assert.Equal(1, resS01First.Item.IndexNumber);
+
+            // Season 1 Last Episode (S01E03) -> Group Order 1, Episode Order 2
+            var infoS01Last = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 3, MetadataLanguage = "en" };
+            infoS01Last.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            infoS01Last.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+            var resS01Last = await provider.GetMetadata(infoS01Last, CancellationToken.None);
+            Assert.True(resS01Last.HasMetadata);
+            Assert.Equal(1, resS01Last.Item.ParentIndexNumber);
+            Assert.Equal(3, resS01Last.Item.IndexNumber);
+
+            // Season 2 First Episode (S02E01) -> Group Order 2, Episode Order 0
+            var infoS02First = new EpisodeInfo { ParentIndexNumber = 2, IndexNumber = 1, MetadataLanguage = "en" };
+            infoS02First.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            infoS02First.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+            var resS02First = await provider.GetMetadata(infoS02First, CancellationToken.None);
+            Assert.True(resS02First.HasMetadata);
+            Assert.Equal(2, resS02First.Item.ParentIndexNumber);
+            Assert.Equal(1, resS02First.Item.IndexNumber);
+
+            // Season 5 Middle Saga (S05E01) -> Group Order 5, Episode Order 0
+            var infoS05 = new EpisodeInfo { ParentIndexNumber = 5, IndexNumber = 1, MetadataLanguage = "en" };
+            infoS05.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            infoS05.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+            var resS05 = await provider.GetMetadata(infoS05, CancellationToken.None);
+            Assert.True(resS05.HasMetadata);
+            Assert.Equal(5, resS05.Item.ParentIndexNumber);
+            Assert.Equal(1, resS05.Item.IndexNumber);
+
+            // Season 9 First Episode (S09E01) -> Group Order 9, Episode Order 0
+            var infoS09First = new EpisodeInfo { ParentIndexNumber = 9, IndexNumber = 1, MetadataLanguage = "en" };
+            infoS09First.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            infoS09First.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+            var resS09First = await provider.GetMetadata(infoS09First, CancellationToken.None);
+            Assert.True(resS09First.HasMetadata);
+            Assert.Equal(9, resS09First.Item.ParentIndexNumber);
+            Assert.Equal(1, resS09First.Item.IndexNumber);
+
+            // Season 9 Last Episode (S09E03) -> Group Order 9, Episode Order 2
+            var infoS09Last = new EpisodeInfo { ParentIndexNumber = 9, IndexNumber = 3, MetadataLanguage = "en" };
+            infoS09Last.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            infoS09Last.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+            var resS09Last = await provider.GetMetadata(infoS09Last, CancellationToken.None);
+            Assert.True(resS09Last.HasMetadata);
+            Assert.Equal(9, resS09Last.Item.ParentIndexNumber);
+            Assert.Equal(3, resS09Last.Item.IndexNumber);
         }
 
         [Fact]

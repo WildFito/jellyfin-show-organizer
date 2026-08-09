@@ -59,6 +59,7 @@ namespace Jellyfin.Plugin.ShowOrganizer
                 }
 
                 Providers.Tmdb.ShowOrganizerEpisodeProvider.ResetState(_logger);
+                Services.TmdbClientService.ResetCredentialLogged();
 
                 _logger?.LogInformation("ShowOrganizer: Dispose completed.");
             }

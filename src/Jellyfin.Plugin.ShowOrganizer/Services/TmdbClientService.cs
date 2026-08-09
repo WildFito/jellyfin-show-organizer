@@ -23,7 +23,12 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         private readonly object _clientLock = new object();
         private readonly object _configTaskLock = new object();
         private Task? _configInitializationTask;
-        private bool _credentialLogged = false;
+        private static bool _credentialLogged = false;
+
+        public static void ResetCredentialLogged()
+        {
+            _credentialLogged = false;
+        }
 
         public TmdbClientService(IMemoryCache memoryCache)
             : this(memoryCache, null, null)
@@ -35,7 +40,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             _memoryCache = memoryCache;
             _pluginManager = pluginManager;
             _logger = logger;
-            _logger?.LogInformation("ShowOrganizer: TmdbClientService created.");
+            _logger?.LogDebug("ShowOrganizer: TmdbClientService created.");
         }
 
         protected virtual TMDbClient? GetClient()
@@ -306,7 +311,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 var rawName = collection.Name?.Trim();
                 var groupName = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim('"');
 
-                _logger?.LogInformation("Retrieved TMDb episode group {GroupId} for series {SeriesId}: \"{GroupName}\" ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
+                _logger?.LogInformation("Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
             }
             else
             {
@@ -419,7 +424,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             if (disposing)
             {
                 _tmDbClient?.Dispose();
-                _logger?.LogInformation("ShowOrganizer: TmdbClientService disposed.");
+                _logger?.LogDebug("ShowOrganizer: TmdbClientService disposed.");
             }
         }
     }

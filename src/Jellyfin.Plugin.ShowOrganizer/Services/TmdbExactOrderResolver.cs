@@ -22,7 +22,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         {
             _tmdbClientService = tmdbClientService;
             _logger = logger;
-            _logger?.LogInformation("ShowOrganizer: TmdbExactOrderResolver created.");
+            _logger?.LogDebug("ShowOrganizer: TmdbExactOrderResolver created.");
         }
 
         public virtual async Task<(int SeasonNumber, int EpisodeNumber)> ResolveCoordinatesAsync(
@@ -44,8 +44,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 return (-1, -1);
             }
 
-            var targetGroupOrder = customSeasonNumber - 1;
-            var season = groupCollection.Groups.Find(s => s.Order == targetGroupOrder);
+            var season = groupCollection.Groups.Find(s => s.Order == customSeasonNumber);
             if (season?.Episodes == null)
             {
                 return (-1, -1);
@@ -70,7 +69,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         {
             if (disposing)
             {
-                _logger?.LogInformation("ShowOrganizer: TmdbExactOrderResolver disposed.");
+                _logger?.LogDebug("ShowOrganizer: TmdbExactOrderResolver disposed.");
             }
         }
     }
