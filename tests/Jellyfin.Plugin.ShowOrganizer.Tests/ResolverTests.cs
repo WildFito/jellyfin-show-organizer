@@ -824,5 +824,18 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             Assert.NotNull(resolverDescriptor);
             Assert.Equal(ServiceLifetime.Transient, resolverDescriptor.Lifetime);
         }
+
+        [Fact]
+        public void ServiceLifecycle_IDisposableLoggingTest()
+        {
+            var cache = new TestMemoryCache();
+            var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
+            Assert.NotNull(service);
+            service.Dispose();
+
+            var resolver = new TmdbExactOrderResolver(service, NullLogger<TmdbExactOrderResolver>.Instance);
+            Assert.NotNull(resolver);
+            resolver.Dispose();
+        }
     }
 }

@@ -1,6 +1,6 @@
 name: "ShowOrganizer"
 guid: "f98bb2d0-ea65-4f36-be5d-ff63d7d7b1d1"
-version: "0.1.5.0"
+version: "0.1.6.0"
 targetAbi: "10.11.0.0"
 framework: "net9.0"
 category: "Metadata"
@@ -10,4 +10,4 @@ description: "A Jellyfin metadata provider plugin that allows users to specify a
 imageUrl: "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png"
 artifacts:
   - "Jellyfin.Plugin.ShowOrganizer.dll"
-changelog: "Fix plugin lifecycle update cleanup issue by changing DI service registrations from Singleton to Transient and implementing IDisposable in Plugin to clear static references and provider state upon plugin unloading."
+changelog: "Add targeted plugin and service lifecycle diagnostic logging (version, location, PID, ALC, disposal events, static cache clearing count) to diagnose plugin updates and unload state."

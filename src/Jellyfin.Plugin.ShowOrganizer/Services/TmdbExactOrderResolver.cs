@@ -4,15 +4,25 @@ using System.Threading.Tasks;
 using Jellyfin.Plugin.ShowOrganizer.Models;
 using TMDbLib.Objects.TvShows;
 
+using Microsoft.Extensions.Logging;
+
 namespace Jellyfin.Plugin.ShowOrganizer.Services
 {
-    public class TmdbExactOrderResolver
+    public class TmdbExactOrderResolver : IDisposable
     {
         private readonly TmdbClientService _tmdbClientService;
+        private readonly ILogger<TmdbExactOrderResolver>? _logger;
 
         public TmdbExactOrderResolver(TmdbClientService tmdbClientService)
+            : this(tmdbClientService, null)
+        {
+        }
+
+        public TmdbExactOrderResolver(TmdbClientService tmdbClientService, ILogger<TmdbExactOrderResolver>? logger)
         {
             _tmdbClientService = tmdbClientService;
+            _logger = logger;
+            _logger?.LogInformation("ShowOrganizer: TmdbExactOrderResolver created.");
         }
 
         public virtual async Task<(int SeasonNumber, int EpisodeNumber)> ResolveCoordinatesAsync(
@@ -48,6 +58,20 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             }
 
             return (-1, -1);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _logger?.LogInformation("ShowOrganizer: TmdbExactOrderResolver disposed.");
+            }
         }
     }
 }

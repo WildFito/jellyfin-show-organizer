@@ -25,9 +25,12 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
     {
         private static readonly ConcurrentDictionary<string, bool> _activatedSeriesGroups = new();
 
-        public static void ResetState()
+        public static int ResetState(ILogger? logger = null)
         {
+            var count = _activatedSeriesGroups.Count;
             _activatedSeriesGroups.Clear();
+            logger?.LogInformation("ShowOrganizer: Clearing static provider state during plugin shutdown. Entries cleared={Count}", count);
+            return count;
         }
 
         private readonly TmdbClientService _tmdbClientService;

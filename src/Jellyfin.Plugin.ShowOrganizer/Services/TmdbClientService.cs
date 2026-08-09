@@ -35,6 +35,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             _memoryCache = memoryCache;
             _pluginManager = pluginManager;
             _logger = logger;
+            _logger?.LogInformation("ShowOrganizer: TmdbClientService created.");
         }
 
         protected virtual TMDbClient? GetClient()
@@ -418,6 +419,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             if (disposing)
             {
                 _tmDbClient?.Dispose();
+                _logger?.LogInformation("ShowOrganizer: TmdbClientService disposed.");
             }
         }
     }
