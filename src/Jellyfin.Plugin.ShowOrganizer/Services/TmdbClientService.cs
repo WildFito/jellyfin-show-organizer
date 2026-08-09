@@ -21,8 +21,8 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         private readonly ILogger<TmdbClientService>? _logger;
         private TMDbClient? _tmDbClient;
         private readonly object _clientLock = new object();
-        private readonly SemaphoreSlim _configLock = new SemaphoreSlim(1, 1);
-        private bool _configAttempted = false;
+        private readonly object _configTaskLock = new object();
+        private Task? _configInitializationTask;
         private bool _credentialLogged = false;
 
         public TmdbClientService(IMemoryCache memoryCache)
@@ -64,33 +64,63 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         public virtual async Task EnsureClientConfigAsync(CancellationToken cancellationToken = default)
         {
             var client = GetClient();
-            if (client == null || client.HasConfig || _configAttempted)
+            if (client == null || client.HasConfig)
             {
                 return;
             }
 
-            await _configLock.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
+            Task taskToAwait;
+            lock (_configTaskLock)
             {
-                if (client.HasConfig || _configAttempted)
+                if (client.HasConfig)
                 {
                     return;
                 }
 
-                _configAttempted = true;
-                try
+                if (_configInitializationTask == null)
                 {
-                    await client.GetConfigAsync().ConfigureAwait(false);
+                    var tcs = new TaskCompletionSource<bool>();
+                    _configInitializationTask = tcs.Task;
+                    taskToAwait = _configInitializationTask;
+                    _ = RunConfigFetchAsync(client, tcs);
                 }
-                catch (Exception ex)
+                else
                 {
-                    _logger?.LogWarning(ex, "Failed to retrieve TMDb client configuration. Falling back to standard image CDN URLs.");
+                    taskToAwait = _configInitializationTask;
                 }
             }
-            finally
+
+            await taskToAwait.ConfigureAwait(false);
+        }
+
+        private async Task RunConfigFetchAsync(TMDbClient client, TaskCompletionSource<bool> tcs)
+        {
+            try
             {
-                _configLock.Release();
+                await ExecuteGetConfigAsync(client).ConfigureAwait(false);
+                if (!client.HasConfig)
+                {
+                    lock (_configTaskLock)
+                    {
+                        _configInitializationTask = null;
+                    }
+                }
+                tcs.TrySetResult(true);
             }
+            catch (Exception ex)
+            {
+                _logger?.LogWarning(ex, "Failed to retrieve TMDb client configuration. Will attempt retry on future requests.");
+                lock (_configTaskLock)
+                {
+                    _configInitializationTask = null;
+                }
+                tcs.TrySetResult(false);
+            }
+        }
+
+        protected virtual async Task ExecuteGetConfigAsync(TMDbClient client)
+        {
+            await client.GetConfigAsync().ConfigureAwait(false);
         }
 
         public virtual string? ResolveTmdbApiKey()
@@ -388,7 +418,6 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             if (disposing)
             {
                 _tmDbClient?.Dispose();
-                _configLock.Dispose();
             }
         }
     }

@@ -19,6 +19,7 @@ using MediaBrowser.Model.Updates;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
+using TMDbLib.Client;
 using TMDbLib.Objects.TvShows;
 using Xunit;
 
@@ -403,25 +404,112 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             }
         }
 
+        private class ControllableTmdbClientService : TmdbClientService
+        {
+            private TaskCompletionSource<bool> _tcs = new TaskCompletionSource<bool>();
+            public int ExecuteCount { get; private set; }
+            public bool ShouldFail { get; set; }
+            public bool AutoRelease { get; set; }
+
+            public ControllableTmdbClientService(IMemoryCache cache) : base(cache) { }
+
+            public TMDbClient? GetTestClient() => GetClient();
+
+            public void ReleaseConfig()
+            {
+                _tcs.TrySetResult(true);
+            }
+
+            protected override async Task ExecuteGetConfigAsync(TMDbClient client)
+            {
+                ExecuteCount++;
+                if (ShouldFail)
+                {
+                    throw new InvalidOperationException("Simulated network failure");
+                }
+
+                if (!AutoRelease)
+                {
+                    await _tcs.Task;
+                }
+
+                client.SetConfig(new TMDbLib.Objects.General.TMDbConfig
+                {
+                    Images = new TMDbLib.Objects.General.ConfigImageTypes
+                    {
+                        SecureBaseUrl = "https://image.tmdb.org/t/p/",
+                        BaseUrl = "http://image.tmdb.org/t/p/"
+                    }
+                });
+            }
+        }
+
         [Fact]
-        public async Task TmdbClientService_EnsureClientConfigAsync_InitializesOnceConcurrently()
+        public async Task TmdbClientService_EnsureClientConfigAsync_InFlightCallersBlockAndShareSingleTask()
         {
             var cache = new TestMemoryCache();
-            var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
+            var service = new ControllableTmdbClientService(cache);
 
-            var tasks = new List<Task<string?>>();
-            for (int i = 0; i < 20; i++)
+            // Start Caller A
+            var taskA = service.EnsureClientConfigAsync();
+
+            // Verify GetConfigAsync has started and is currently in flight
+            Assert.Equal(1, service.ExecuteCount);
+            Assert.False(taskA.IsCompleted);
+
+            // Start Callers B and C while A is still in flight
+            var taskB = service.EnsureClientConfigAsync();
+            var taskC = service.GetImageUrlAsync("w500", "/poster.jpg");
+
+            // Verify Callers B and C have NOT completed early while config remains blocked
+            Assert.False(taskB.IsCompleted);
+            Assert.False(taskC.IsCompleted);
+
+            // Verify GetConfigAsync was called exactly ONCE so far
+            Assert.Equal(1, service.ExecuteCount);
+
+            // Release the in-flight configuration fetch
+            service.ReleaseConfig();
+
+            // Await all tasks
+            await Task.WhenAll(taskA, taskB, taskC);
+
+            // Verify all callers completed successfully
+            Assert.True(taskA.IsCompletedSuccessfully);
+            Assert.True(taskB.IsCompletedSuccessfully);
+            Assert.Equal("https://image.tmdb.org/t/p/w500/poster.jpg", await taskC);
+
+            // Verify GetConfigAsync was executed exactly ONCE total
+            Assert.Equal(1, service.ExecuteCount);
+        }
+
+        [Fact]
+        public async Task TmdbClientService_EnsureClientConfigAsync_RetriesOnTransientFailure()
+        {
+            var cache = new TestMemoryCache();
+            var service = new ControllableTmdbClientService(cache)
             {
-                tasks.Add(service.GetImageUrlAsync("w500", $"/image_{i}.jpg", CancellationToken.None));
-            }
+                ShouldFail = true,
+                AutoRelease = true
+            };
 
-            var results = await Task.WhenAll(tasks);
+            // Attempt 1: Fails
+            await service.EnsureClientConfigAsync();
+            Assert.Equal(1, service.ExecuteCount);
 
-            Assert.Equal(20, results.Length);
-            for (int i = 0; i < 20; i++)
-            {
-                Assert.Equal($"https://image.tmdb.org/t/p/w500/image_{i}.jpg", results[i]);
-            }
+            // Configure attempt 2 to succeed
+            service.ShouldFail = false;
+
+            var client = service.GetTestClient();
+            Assert.False(client?.HasConfig ?? false);
+
+            // Attempt 2: Retries and succeeds
+            await service.EnsureClientConfigAsync();
+            Assert.Equal(2, service.ExecuteCount);
+
+            // Attempt 3: Should skip because config is now initialized (HasConfig == true)
+            await service.EnsureClientConfigAsync();
+            Assert.Equal(2, service.ExecuteCount);
         }
 
         [Fact]
