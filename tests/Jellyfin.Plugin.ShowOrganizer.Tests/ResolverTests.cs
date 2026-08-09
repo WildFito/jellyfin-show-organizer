@@ -404,6 +404,22 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
+        public void TmdbClientService_GetImageUrl_ReturnsSafeCdnUrlWithoutException()
+        {
+            var cache = new TestMemoryCache();
+            var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
+
+            var profileUrl = service.GetProfileUrl("/test_actor.jpg");
+            Assert.Equal("https://image.tmdb.org/t/p/original/test_actor.jpg", profileUrl);
+
+            var imageUrl = service.GetImageUrl("w500", "/test_still.jpg");
+            Assert.Equal("https://image.tmdb.org/t/p/w500/test_still.jpg", imageUrl);
+
+            Assert.Null(service.GetImageUrl("w500", null));
+            Assert.Null(service.GetProfileUrl(""));
+        }
+
+        [Fact]
         public async Task ShowOrganizerSeasonProvider_AppliesGroupSeasonNames()
         {
             var cache = new TestMemoryCache();

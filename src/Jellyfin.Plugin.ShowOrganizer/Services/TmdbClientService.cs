@@ -266,24 +266,41 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
+        private const string TmdbImageBaseUrl = "https://image.tmdb.org/t/p/";
+
         public string? GetProfileUrl(string? path)
         {
-            if (string.IsNullOrEmpty(path))
-            {
-                return null;
-            }
-            var client = GetClient();
-            return client?.GetImageUrl("original", path, true)?.ToString();
+            return GetImageUrl("original", path);
         }
 
         public string? GetImageUrl(string size, string? path)
         {
-            if (string.IsNullOrEmpty(path))
+            if (string.IsNullOrWhiteSpace(path))
             {
                 return null;
             }
-            var client = GetClient();
-            return client?.GetImageUrl(size, path, true)?.ToString();
+
+            var cleanPath = path.TrimStart('/');
+            var cleanSize = string.IsNullOrWhiteSpace(size) ? "original" : size;
+
+            try
+            {
+                var client = GetClient();
+                if (client != null && client.HasConfig)
+                {
+                    var url = client.GetImageUrl(cleanSize, path, true);
+                    if (url != null)
+                    {
+                        return url.ToString();
+                    }
+                }
+            }
+            catch
+            {
+                // Fallback to standard TMDB CDN URL
+            }
+
+            return $"{TmdbImageBaseUrl}{cleanSize}/{cleanPath}";
         }
 
         private static string? NormalizeLanguage(string? language)
