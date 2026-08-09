@@ -837,5 +837,18 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             Assert.NotNull(resolver);
             resolver.Dispose();
         }
+
+        [Fact]
+        public void BasePlugin_DoesNotImplementIDisposable_PluginImplementsIDisposableDirectly()
+        {
+            var baseType = typeof(BasePlugin<PluginConfiguration>);
+            var isDisposable = typeof(IDisposable).IsAssignableFrom(baseType);
+            Assert.False(isDisposable);
+
+            var disposeMethods = baseType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Where(m => m.Name.Contains("Dispose"))
+                .ToList();
+            Assert.Empty(disposeMethods);
+        }
     }
 }
