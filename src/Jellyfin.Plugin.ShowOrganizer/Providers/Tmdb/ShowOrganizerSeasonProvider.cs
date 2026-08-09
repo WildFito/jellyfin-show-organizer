@@ -63,10 +63,12 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
             }
 
             var customSeasonNumber = info.IndexNumber;
-            if (!customSeasonNumber.HasValue)
+            if (!customSeasonNumber.HasValue || customSeasonNumber.Value <= 0)
             {
                 return result;
             }
+
+            var targetOrder = customSeasonNumber.Value - 1;
 
             var groupCollection = await _tmdbClientService.GetTvEpisodeGroupsAsync(
                 seriesTmdbId,
@@ -79,17 +81,20 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return result;
             }
 
-            var matchingGroup = groupCollection.Groups.Find(g => g.Order == customSeasonNumber.Value);
+            var matchingGroup = groupCollection.Groups.Find(g => g.Order == targetOrder);
             if (matchingGroup == null)
             {
                 return result;
             }
 
+            var cleanName = matchingGroup.Name?.Trim(' ', '"') ?? string.Empty;
+            _logger.LogDebug("ShowOrganizer: Mapped custom season S{Season:02} -> episode-group Order {GroupOrder} (\"{GroupName}\").", customSeasonNumber.Value, targetOrder, cleanName);
+
             result.HasMetadata = true;
             result.Item = new Season
             {
                 IndexNumber = customSeasonNumber,
-                Name = matchingGroup.Name
+                Name = cleanName
             };
 
             return result;

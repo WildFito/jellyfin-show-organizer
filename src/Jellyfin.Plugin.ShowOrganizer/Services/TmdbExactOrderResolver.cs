@@ -23,7 +23,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             string? language,
             CancellationToken cancellationToken)
         {
-            if (orderRef.Provider != "tmdb")
+            if (orderRef.Provider != "tmdb" || customSeasonNumber <= 0 || customEpisodeNumber <= 0)
             {
                 return (-1, -1);
             }
@@ -34,7 +34,8 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 return (-1, -1);
             }
 
-            var season = groupCollection.Groups.Find(s => s.Order == customSeasonNumber);
+            var targetGroupOrder = customSeasonNumber - 1;
+            var season = groupCollection.Groups.Find(s => s.Order == targetGroupOrder);
             if (season?.Episodes == null)
             {
                 return (-1, -1);
