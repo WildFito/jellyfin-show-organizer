@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",
         "versions": [
             {
+                "version": "0.1.6.0",
+                "changelog": "Add targeted plugin and service lifecycle diagnostic logging (version, location, PID, ALC, disposal events, static cache clearing count) to diagnose plugin updates and unload state.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/WildFito/jellyfin-show-organizer/releases/download/v0.1.6.0/showorganizer_0.1.6.0.zip",
+                "checksum": "95dfcfde7807fc0871e2faa71922d952",
+                "timestamp": "2026-08-09T14:58:38Z"
+            },
+            {
                 "version": "0.1.4.0",
                 "changelog": "Fix 1-based to 0-based season mapping off-by-one error in ShowOrganizerSeasonProvider and TmdbExactOrderResolver, add season mapping DEBUG logs, and add 0-based season/group regression tests.",
                 "targetAbi": "10.11.0.0",
