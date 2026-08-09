@@ -25,6 +25,11 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
     {
         private static readonly ConcurrentDictionary<string, bool> _activatedSeriesGroups = new();
 
+        public static void ResetState()
+        {
+            _activatedSeriesGroups.Clear();
+        }
+
         private readonly TmdbClientService _tmdbClientService;
         private readonly TmdbExactOrderResolver _resolver;
         private readonly IHttpClientFactory _httpClientFactory;

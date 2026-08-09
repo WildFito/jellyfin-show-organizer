@@ -9,8 +9,8 @@ namespace Jellyfin.Plugin.ShowOrganizer
     {
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
-            serviceCollection.AddSingleton<TmdbClientService>();
-            serviceCollection.AddSingleton<TmdbExactOrderResolver>();
+            serviceCollection.AddTransient<TmdbClientService>();
+            serviceCollection.AddTransient<TmdbExactOrderResolver>();
         }
     }
 }

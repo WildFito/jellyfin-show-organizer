@@ -17,6 +17,7 @@ using MediaBrowser.Model.Plugins;
 using MediaBrowser.Model.Providers;
 using MediaBrowser.Model.Updates;
 using Microsoft.Extensions.Caching.Memory;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using TMDbLib.Client;
@@ -792,6 +793,36 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             var result = await provider.GetMetadata(info, CancellationToken.None);
 
             Assert.False(result.HasMetadata);
+        }
+
+        [Fact]
+        public void PluginDisposal_ClearsStaticInstanceAndResetsProviderState()
+        {
+            var plugin = (Plugin)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(Plugin));
+            typeof(Plugin).GetProperty(nameof(Plugin.Instance))?.SetValue(null, plugin);
+
+            Assert.Same(plugin, Plugin.Instance);
+
+            var disposeMethod = typeof(Plugin).GetMethod("Dispose", BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(bool) }, null);
+            disposeMethod?.Invoke(plugin, new object[] { true });
+
+            Assert.Null(Plugin.Instance);
+        }
+
+        [Fact]
+        public void PluginServiceRegistrator_RegistersServicesAsTransient()
+        {
+            var services = new ServiceCollection();
+            var registrator = new PluginServiceRegistrator();
+            registrator.RegisterServices(services, null!);
+
+            var tmdbServiceDescriptor = services.FirstOrDefault(sd => sd.ServiceType == typeof(TmdbClientService));
+            Assert.NotNull(tmdbServiceDescriptor);
+            Assert.Equal(ServiceLifetime.Transient, tmdbServiceDescriptor.Lifetime);
+
+            var resolverDescriptor = services.FirstOrDefault(sd => sd.ServiceType == typeof(TmdbExactOrderResolver));
+            Assert.NotNull(resolverDescriptor);
+            Assert.Equal(ServiceLifetime.Transient, resolverDescriptor.Lifetime);
         }
     }
 }
