@@ -119,7 +119,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
             {
                 if (episodeResult != null && !string.IsNullOrEmpty(episodeResult.StillPath))
                 {
-                    var imageUrl = _tmdbClientService.GetImageUrl("original", episodeResult.StillPath);
+                    var imageUrl = await _tmdbClientService.GetImageUrlAsync("original", episodeResult.StillPath, cancellationToken).ConfigureAwait(false);
                     if (imageUrl != null)
                     {
                         return new[]
@@ -140,7 +140,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
             var results = new List<RemoteImageInfo>();
             foreach (var img in stills)
             {
-                var imageUrl = _tmdbClientService.GetImageUrl("original", img.FilePath);
+                var imageUrl = await _tmdbClientService.GetImageUrlAsync("original", img.FilePath, cancellationToken).ConfigureAwait(false);
                 if (imageUrl != null)
                 {
                     results.Add(new RemoteImageInfo

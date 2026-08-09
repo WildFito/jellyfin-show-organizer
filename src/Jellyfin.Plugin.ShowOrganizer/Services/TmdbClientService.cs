@@ -14,12 +14,15 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
     public class TmdbClientService : IDisposable
     {
         private const int CacheDurationInHours = 1;
+        private const string TmdbImageBaseUrl = "https://image.tmdb.org/t/p/";
 
         private readonly IMemoryCache _memoryCache;
         private readonly IPluginManager? _pluginManager;
         private readonly ILogger<TmdbClientService>? _logger;
         private TMDbClient? _tmDbClient;
         private readonly object _clientLock = new object();
+        private readonly SemaphoreSlim _configLock = new SemaphoreSlim(1, 1);
+        private bool _configAttempted = false;
         private bool _credentialLogged = false;
 
         public TmdbClientService(IMemoryCache memoryCache)
@@ -56,6 +59,38 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 }
             }
             return _tmDbClient;
+        }
+
+        public virtual async Task EnsureClientConfigAsync(CancellationToken cancellationToken = default)
+        {
+            var client = GetClient();
+            if (client == null || client.HasConfig || _configAttempted)
+            {
+                return;
+            }
+
+            await _configLock.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                if (client.HasConfig || _configAttempted)
+                {
+                    return;
+                }
+
+                _configAttempted = true;
+                try
+                {
+                    await client.GetConfigAsync().ConfigureAwait(false);
+                }
+                catch (Exception ex)
+                {
+                    _logger?.LogWarning(ex, "Failed to retrieve TMDb client configuration. Falling back to standard image CDN URLs.");
+                }
+            }
+            finally
+            {
+                _configLock.Release();
+            }
         }
 
         public virtual string? ResolveTmdbApiKey()
@@ -236,7 +271,11 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             if (collection != null && collection.Groups != null)
             {
                 _memoryCache.Set(key, collection, TimeSpan.FromHours(CacheDurationInHours));
-                _logger?.LogInformation("Retrieved TMDb episode group {GroupId} for series {SeriesId}: \"{GroupName}\" ({GroupCount} groups).", groupId, tvShowId, collection.Name, collection.Groups.Count);
+
+                var rawName = collection.Name?.Trim();
+                var groupName = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim('"');
+
+                _logger?.LogInformation("Retrieved TMDb episode group {GroupId} for series {SeriesId}: \"{GroupName}\" ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
             }
             else
             {
@@ -266,14 +305,12 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 cancellationToken: cancellationToken).ConfigureAwait(false);
         }
 
-        private const string TmdbImageBaseUrl = "https://image.tmdb.org/t/p/";
-
-        public string? GetProfileUrl(string? path)
+        public virtual async Task<string?> GetProfileUrlAsync(string? path, CancellationToken cancellationToken = default)
         {
-            return GetImageUrl("original", path);
+            return await GetImageUrlAsync("original", path, cancellationToken).ConfigureAwait(false);
         }
 
-        public string? GetImageUrl(string size, string? path)
+        public virtual async Task<string?> GetImageUrlAsync(string size, string? path, CancellationToken cancellationToken = default)
         {
             if (string.IsNullOrWhiteSpace(path))
             {
@@ -285,6 +322,8 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             try
             {
+                await EnsureClientConfigAsync(cancellationToken).ConfigureAwait(false);
+
                 var client = GetClient();
                 if (client != null && client.HasConfig)
                 {
@@ -295,12 +334,31 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                     }
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Fallback to standard TMDB CDN URL
+                _logger?.LogDebug(ex, "Error formatting TMDb image URL via TMDbClient. Falling back to standard CDN.");
             }
 
             return $"{TmdbImageBaseUrl}{cleanSize}/{cleanPath}";
+        }
+
+        public string? GetProfileUrl(string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+            return $"{TmdbImageBaseUrl}original/{path.TrimStart('/')}";
+        }
+
+        public string? GetImageUrl(string size, string? path)
+        {
+            if (string.IsNullOrWhiteSpace(path))
+            {
+                return null;
+            }
+            var cleanSize = string.IsNullOrWhiteSpace(size) ? "original" : size;
+            return $"{TmdbImageBaseUrl}{cleanSize}/{path.TrimStart('/')}";
         }
 
         private static string? NormalizeLanguage(string? language)
@@ -330,6 +388,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
             if (disposing)
             {
                 _tmDbClient?.Dispose();
+                _configLock.Dispose();
             }
         }
     }

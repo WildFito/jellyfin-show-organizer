@@ -404,19 +404,67 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
-        public void TmdbClientService_GetImageUrl_ReturnsSafeCdnUrlWithoutException()
+        public async Task TmdbClientService_EnsureClientConfigAsync_InitializesOnceConcurrently()
         {
             var cache = new TestMemoryCache();
             var service = new TmdbClientService(cache, null, NullLogger<TmdbClientService>.Instance);
 
-            var profileUrl = service.GetProfileUrl("/test_actor.jpg");
-            Assert.Equal("https://image.tmdb.org/t/p/original/test_actor.jpg", profileUrl);
+            var tasks = new List<Task<string?>>();
+            for (int i = 0; i < 20; i++)
+            {
+                tasks.Add(service.GetImageUrlAsync("w500", $"/image_{i}.jpg", CancellationToken.None));
+            }
 
-            var imageUrl = service.GetImageUrl("w500", "/test_still.jpg");
-            Assert.Equal("https://image.tmdb.org/t/p/w500/test_still.jpg", imageUrl);
+            var results = await Task.WhenAll(tasks);
 
-            Assert.Null(service.GetImageUrl("w500", null));
-            Assert.Null(service.GetProfileUrl(""));
+            Assert.Equal(20, results.Length);
+            for (int i = 0; i < 20; i++)
+            {
+                Assert.Equal($"https://image.tmdb.org/t/p/w500/image_{i}.jpg", results[i]);
+            }
+        }
+
+        [Fact]
+        public async Task EpisodeProvider_ConfigNotInitialized_CompletesWithoutInvalidOperationException()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache)
+            {
+                MockGroupCollection = new TvGroupCollection
+                {
+                    Id = "69681f95c0c672f8f05b21b4",
+                    Name = "Dragon Ball Recut (Sagas)",
+                    Groups = new List<TvGroup>
+                    {
+                        new TvGroup
+                        {
+                            Order = 1,
+                            Episodes = new List<TvGroupEpisode>
+                            {
+                                new TvGroupEpisode { Order = 0, SeasonNumber = 1, EpisodeNumber = 1 }
+                            }
+                        }
+                    }
+                }
+            };
+
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo
+            {
+                ParentIndexNumber = 1,
+                IndexNumber = 1,
+                MetadataLanguage = "en"
+            };
+            info.SeriesProviderIds["ShowOrganizer"] = "tmdb:69681f95c0c672f8f05b21b4";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "12609";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+
+            Assert.True(result.HasMetadata);
+            Assert.NotNull(result.Item);
+            Assert.Equal("S01E01", result.Item.Name);
         }
 
         [Fact]

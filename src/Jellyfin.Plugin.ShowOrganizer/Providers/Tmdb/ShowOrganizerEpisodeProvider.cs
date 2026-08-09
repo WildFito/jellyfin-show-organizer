@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -22,6 +23,8 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
 {
     public class ShowOrganizerEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
     {
+        private static readonly ConcurrentDictionary<string, bool> _activatedSeriesGroups = new();
+
         private readonly TmdbClientService _tmdbClientService;
         private readonly TmdbExactOrderResolver _resolver;
         private readonly IHttpClientFactory _httpClientFactory;
@@ -133,7 +136,11 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return metadataResult;
             }
 
-            _logger.LogInformation("Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
+            var activationKey = $"{seriesTmdbId}:{orderRef.OrderId}";
+            if (_activatedSeriesGroups.TryAdd(activationKey, true))
+            {
+                _logger.LogInformation("Activated for series (TMDb {TmdbId}) using episode group \"{GroupId}\".", seriesTmdbId, orderRef.OrderId);
+            }
             _logger.LogDebug("Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.", seasonNumber, episodeNumber.Value, resolvedSeason, resolvedEpisode, orderRef.OrderId);
 
             TvEpisode? episodeResult = null;
@@ -263,7 +270,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                         Role = actor.Character?.Trim() ?? string.Empty,
                         Type = PersonKind.Actor,
                         SortOrder = actor.Order,
-                        ImageUrl = _tmdbClientService.GetProfileUrl(actor.ProfilePath)
+                        ImageUrl = await _tmdbClientService.GetProfileUrlAsync(actor.ProfilePath, cancellationToken).ConfigureAwait(false)
                     };
 
                     if (actor.Id > 0)
@@ -294,7 +301,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                         Role = guest.Character?.Trim() ?? string.Empty,
                         Type = PersonKind.GuestStar,
                         SortOrder = guest.Order,
-                        ImageUrl = _tmdbClientService.GetProfileUrl(guest.ProfilePath)
+                        ImageUrl = await _tmdbClientService.GetProfileUrlAsync(guest.ProfilePath, cancellationToken).ConfigureAwait(false)
                     };
 
                     if (guest.Id > 0)
@@ -338,7 +345,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                         Name = crewMember.Name.Trim(),
                         Role = crewMember.Job?.Trim() ?? string.Empty,
                         Type = entry.PersonType,
-                        ImageUrl = _tmdbClientService.GetProfileUrl(crewMember.ProfilePath)
+                        ImageUrl = await _tmdbClientService.GetProfileUrlAsync(crewMember.ProfilePath, cancellationToken).ConfigureAwait(false)
                     };
 
                     if (crewMember.Id > 0)

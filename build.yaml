@@ -10,4 +10,4 @@ description: "A Jellyfin metadata provider plugin that allows users to specify a
 imageUrl: "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png"
 artifacts:
   - "Jellyfin.Plugin.ShowOrganizer.dll"
-changelog: "Fix TMDb image URL resolution to use safe CDN fallback, avoiding TMDbLib InvalidOperationException: Call GetConfig() or SetConfig() first."
+changelog: "Add thread-safe async TMDb client configuration initialization (EnsureClientConfigAsync) to fix InvalidOperationException in profile/image URL resolution, deduplicate activation logging, and fix group name quote formatting."
