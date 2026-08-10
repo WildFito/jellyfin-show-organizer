@@ -75,10 +75,12 @@ For example, if your file is **Season 2, Episode 3** (`S02E03`):
 * ShowOrganizer retrieves title, overview, air date, and cast metadata from that canonical TMDb episode and applies it to your item.
 * Your Jellyfin library item **remains `S02E03`**. ShowOrganizer does not rename your files or renumber your Jellyfin library items.
 
+> [!NOTE]
+> **Provider fallback:** ShowOrganizer follows Jellyfin's standard metadata-provider behavior. If it cannot provide metadata for an item — for example because no Show Group is configured or the episode cannot be mapped — it returns no metadata for that item and Jellyfin can continue with the following configured provider.
+
 ## Limitations
 
 * **Season / Saga Artwork**: TMDb Episode Groups define episode orderings and saga subgroup names, but TMDb's Episode Group API does not provide custom subgroup poster artwork. Saga season posters may require local image files (`season01.jpg`, `season02.jpg`) or another image provider.
-* **Provider Fallback**: ShowOrganizer follows Jellyfin's standard metadata provider behavior. If ShowOrganizer cannot provide metadata for an item — for example because no Show Group is configured or an episode cannot be mapped — it returns no result for that item, allowing Jellyfin to continue with the next configured provider.
 
 ## Optional: NFO Configuration
 
