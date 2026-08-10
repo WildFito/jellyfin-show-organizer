@@ -1155,7 +1155,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             Assert.Contains("TheMovieDb Programme Id is missing", warnings[0].Message);
 
             // Now user updates configuration to add TMDb ID 61709
-            var infoUpdated = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            var infoUpdated = new EpisodeInfo { Name = "Series Alpha", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
             infoUpdated.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62";
             infoUpdated.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
 
@@ -1176,6 +1176,49 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             var resUpdated = await provider.GetMetadata(infoUpdated, CancellationToken.None);
             Assert.True(resUpdated.HasMetadata);
             Assert.Equal("Updated Episode", resUpdated.Item?.Name);
+        }
+
+        [Fact]
+        public async Task Eligibility_TwoDifferentSeriesWithSameDisplayName_EmitWarningsForBothSeries()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            var logger = new TestLogger<ShowOrganizerEpisodeProvider>();
+            var mockService = new MockTmdbClientService(new TestMemoryCache());
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
+
+            var infoSeries1 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/CutA/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            infoSeries1.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // TMDb ID missing
+
+            var infoSeries2 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/CutB/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            infoSeries2.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // TMDb ID missing
+
+            await provider.GetMetadata(infoSeries1, CancellationToken.None);
+            await provider.GetMetadata(infoSeries2, CancellationToken.None);
+
+            var warnings = logger.LogEntries.Where(l => l.Level == LogLevel.Warning).ToList();
+            Assert.Equal(2, warnings.Count); // 1 warning for CutA, 1 warning for CutB
+        }
+
+        [Fact]
+        public async Task Cancellation_PropagatesCancellationWithoutLoggingError()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            TmdbClientService.ResetState();
+
+            var serviceLogger = new TestLogger<TmdbClientService>();
+            var memoryCache = new TestMemoryCache();
+            var service = new TestableNotFoundTmdbClientService(memoryCache, serviceLogger);
+
+            using var cts = new CancellationTokenSource();
+            cts.Cancel(); // Pre-cancelled token
+
+            await Assert.ThrowsAsync<OperationCanceledException>(async () =>
+            {
+                await service.GetTvEpisodeGroupsAsync(61709, "group_cancel_test", "en", cts.Token);
+            });
+
+            Assert.DoesNotContain(serviceLogger.LogEntries, l => l.Level == LogLevel.Error);
         }
 
         [Fact]
@@ -1241,6 +1284,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
 
             protected override Task<TvGroupCollection?> FetchGroupFromApiAsync(TMDbClient client, int tvShowId, string groupId, string? normalizedLanguage, string key, CancellationToken cancellationToken)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 ApiCallsCount++;
                 var negKey = $"neg-{key}";
                 var field = typeof(TmdbClientService).GetField("_negativeGroupCache", BindingFlags.NonPublic | BindingFlags.Static);

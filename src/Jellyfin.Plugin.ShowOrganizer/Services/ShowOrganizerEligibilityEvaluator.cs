@@ -21,7 +21,15 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
         public virtual ShowOrganizerEligibilityResult Evaluate(
             IReadOnlyDictionary<string, string> seriesProviderIds,
-            ILogger? logger = null)
+            ILogger? logger)
+        {
+            return Evaluate(seriesProviderIds, null, logger);
+        }
+
+        public virtual ShowOrganizerEligibilityResult Evaluate(
+            IReadOnlyDictionary<string, string> seriesProviderIds,
+            string? seriesIdentity,
+            ILogger? logger)
         {
             if (seriesProviderIds == null)
             {
@@ -37,6 +45,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             var cleanShowOrganizerId = rawShowOrganizerId?.Trim() ?? string.Empty;
             var cleanTmdbId = rawTmdbId?.Trim() ?? string.Empty;
+            var seriesKeyPart = string.IsNullOrWhiteSpace(seriesIdentity) ? string.Empty : $"SERIES:{seriesIdentity.Trim()}|";
 
             if (string.IsNullOrWhiteSpace(cleanShowOrganizerId))
             {
@@ -51,7 +60,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             if (!ShowOrderReference.TryParse(cleanShowOrganizerId, out var orderRef))
             {
-                var fingerprint = $"MALFORMED|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}";
+                var fingerprint = $"{seriesKeyPart}MALFORMED|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}";
                 if (logger != null && _loggedWarnings.TryAdd(fingerprint, true))
                 {
                     logger.LogWarning("ShowOrganizer: Show Group ID '{Id}' is malformed.", cleanShowOrganizerId);
@@ -66,7 +75,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             if (!string.Equals(orderRef.Provider, "tmdb", StringComparison.OrdinalIgnoreCase))
             {
-                var fingerprint = $"UNSUPPORTED|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}";
+                var fingerprint = $"{seriesKeyPart}UNSUPPORTED|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}";
                 if (logger != null && _loggedWarnings.TryAdd(fingerprint, true))
                 {
                     logger.LogWarning("ShowOrganizer: Show Group provider '{Provider}' is unsupported.", orderRef.Provider);
@@ -81,7 +90,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             if (seriesTmdbId <= 0)
             {
-                var fingerprint = $"MISSING_TMDB|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}";
+                var fingerprint = $"{seriesKeyPart}MISSING_TMDB|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}";
                 if (logger != null && _loggedWarnings.TryAdd(fingerprint, true))
                 {
                     logger.LogWarning("ShowOrganizer: Series has Show Group ID '{ShowOrganizerId}' configured, but TheMovieDb Programme Id is missing. ShowOrganizer cannot resolve metadata for this series.", cleanShowOrganizerId);
@@ -94,7 +103,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                     fingerprint);
             }
 
-            var eligibleFingerprint = $"ELIGIBLE|SO:{orderRef.Provider}:{orderRef.OrderId}|TMDB:{seriesTmdbId}";
+            var eligibleFingerprint = $"{seriesKeyPart}ELIGIBLE|SO:{orderRef.Provider}:{orderRef.OrderId}|TMDB:{seriesTmdbId}";
             return new ShowOrganizerEligibilityResult(
                 ShowOrganizerEligibilityState.Eligible,
                 orderRef,

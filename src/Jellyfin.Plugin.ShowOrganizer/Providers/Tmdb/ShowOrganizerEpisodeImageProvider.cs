@@ -73,7 +73,8 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return Enumerable.Empty<RemoteImageInfo>();
             }
 
-            var eligibility = _eligibilityEvaluator.Evaluate(series.ProviderIds, _logger);
+            var seriesIdentity = series.Id != Guid.Empty ? series.Id.ToString("N") : (series.Path ?? series.Name);
+            var eligibility = _eligibilityEvaluator.Evaluate(series.ProviderIds, seriesIdentity, _logger);
             if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
             {
                 return Enumerable.Empty<RemoteImageInfo>();

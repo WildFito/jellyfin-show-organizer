@@ -335,7 +335,13 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             try
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 collection = await client.GetTvEpisodeGroupsAsync(groupId, normalizedLanguage, cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _logger?.LogDebug("ShowOrganizer: TMDb episode group retrieval cancelled by caller for group {GroupId} series {SeriesId}.", groupId, tvShowId);
+                throw;
             }
             catch (Exception ex)
             {
@@ -351,7 +357,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 var rawName = collection.Name?.Trim();
                 var groupName = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim('"');
 
-                _logger?.LogInformation("ShowOrganizer: Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
+                _logger?.LogDebug("ShowOrganizer: Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
                 return collection;
             }
 
@@ -378,14 +384,27 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             var normalizedLanguage = NormalizeLanguage(language);
             
-            return await client.GetTvEpisodeAsync(
-                tvShowId,
-                seasonNumber,
-                episodeNumber,
-                language: normalizedLanguage,
-                includeImageLanguage: imageLanguages,
-                extraMethods: TvEpisodeMethods.Credits | TvEpisodeMethods.Images | TvEpisodeMethods.ExternalIds | TvEpisodeMethods.Videos,
-                cancellationToken: cancellationToken).ConfigureAwait(false);
+            try
+            {
+                return await client.GetTvEpisodeAsync(
+                    tvShowId,
+                    seasonNumber,
+                    episodeNumber,
+                    language: normalizedLanguage,
+                    includeImageLanguage: imageLanguages,
+                    extraMethods: TvEpisodeMethods.Credits | TvEpisodeMethods.Images | TvEpisodeMethods.ExternalIds | TvEpisodeMethods.Videos,
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                _logger?.LogDebug("ShowOrganizer: TMDb episode retrieval cancelled by caller for series {SeriesId} S{Season:02}E{Episode:02}.", tvShowId, seasonNumber, episodeNumber);
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "ShowOrganizer: Failed to retrieve TMDb episode for series {SeriesId} S{Season:02}E{Episode:02}.", tvShowId, seasonNumber, episodeNumber);
+                return null;
+            }
         }
 
         public virtual async Task<string?> GetProfileUrlAsync(string? path, CancellationToken cancellationToken = default)
@@ -417,9 +436,13 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                     }
                 }
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "Error formatting TMDb image URL via TMDbClient. Falling back to standard CDN.");
+                _logger?.LogDebug(ex, "Failed to resolve TMDb image URL for path {Path}.", path);
             }
 
             return $"{TmdbImageBaseUrl}{cleanSize}/{cleanPath}";
