@@ -2,8 +2,8 @@
     {
         "guid": "f98bb2d0-ea65-4f36-be5d-ff63d7d7b1d1",
         "name": "ShowOrganizer",
-        "description": "A Jellyfin metadata provider plugin that allows users to specify an exact TMDB Episode Group ID for a TV series. It supports custom season and episode ordering while keeping custom season/episode numbering intact inside your Jellyfin library.",
-        "overview": "Override built-in metadata providers to organize and map TV shows using exact TMDB episode group orderings.",
+        "description": "Allows a Jellyfin TV series to use a specific The Movie Database (TMDb) Episode Group while preserving local file season/episode numbering, mapping custom Jellyfin coordinates to canonical TMDb episodes for metadata retrieval.",
+        "overview": "Organize Jellyfin TV shows using exact TMDb Episode Groups while preserving custom file numbering and retrieving canonical TMDb metadata.",
         "owner": "WildFito",
         "category": "Metadata",
         "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",

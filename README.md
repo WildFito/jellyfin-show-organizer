@@ -4,7 +4,7 @@
 [![GitHub Release](https://img.shields.io/github/v/release/WildFito/jellyfin-show-organizer)](https://github.com/WildFito/jellyfin-show-organizer/releases)
 [![License](https://img.shields.io/github/license/WildFito/jellyfin-show-organizer)](LICENSE)
 
-ShowOrganizer is a metadata provider plugin for Jellyfin Server that overrides built-in episode ordering logic to support exact episode groups, while preserving local custom numbering.
+ShowOrganizer is a metadata provider plugin for Jellyfin Server that lets a TV series use a specific The Movie Database (TMDb) Episode Group while preserving the custom season and episode numbering used by your local files, mapping those custom Jellyfin coordinates to canonical TMDb episodes for remote metadata retrieval.
 
 ## What It Does
 
