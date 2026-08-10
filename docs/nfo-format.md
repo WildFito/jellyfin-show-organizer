@@ -14,7 +14,7 @@ Add the `<showorganizerid>` tag to the `<tvshow>` XML element:
 <tvshow>
     <title>Dragon Ball Z Kai</title>
     <tmdbid>61709</tmdbid>
-    <showorganizerid>tmdb:648fc7202f8d0900e3864f62</showorganizerid>
+    <showorganizerid>648fc7202f8d0900e3864f62</showorganizerid>
 </tvshow>
 ```
 
@@ -24,7 +24,7 @@ Alternatively, it can be defined using Jellyfin's standard `<uniqueid>` tag form
 <tvshow>
     <title>Dragon Ball Z Kai</title>
     <uniqueid type="tmdb">61709</uniqueid>
-    <uniqueid type="ShowOrganizer">tmdb:648fc7202f8d0900e3864f62</uniqueid>
+    <uniqueid type="ShowOrganizer">648fc7202f8d0900e3864f62</uniqueid>
 </tvshow>
 ```
 
@@ -38,11 +38,11 @@ During metadata refreshes:
 
 ### Value Format
 
-The external ID follows a generic provider-specific format:
+The external ID accepts either raw TMDb Episode Group IDs or prefix-qualified references:
 
 ```
-provider:id
+648fc7202f8d0900e3864f62
 ```
 
-Supported providers:
-* `tmdb` (e.g. `tmdb:648fc7202f8d0900e3864f62`)
+Supported format:
+* TMDb Group ID (e.g. `648fc7202f8d0900e3864f62` or `tmdb:648fc7202f8d0900e3864f62`)

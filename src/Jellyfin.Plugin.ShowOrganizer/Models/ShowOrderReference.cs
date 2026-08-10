@@ -22,21 +22,24 @@ namespace Jellyfin.Plugin.ShowOrganizer.Models
                 return false;
             }
 
-            var parts = value.Split(':', 2);
-            if (parts.Length != 2)
+            var cleanValue = value.Trim();
+
+            if (cleanValue.Contains(':', StringComparison.Ordinal))
             {
-                return false;
+                var parts = cleanValue.Split(':', 2);
+                var provider = parts[0].Trim().ToLowerInvariant();
+                var orderId = parts[1].Trim();
+
+                if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(orderId))
+                {
+                    return false;
+                }
+
+                result = new ShowOrderReference(provider, orderId);
+                return true;
             }
 
-            var provider = parts[0].Trim();
-            var orderId = parts[1].Trim();
-
-            if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(orderId))
-            {
-                return false;
-            }
-
-            result = new ShowOrderReference(provider, orderId);
+            result = new ShowOrderReference("tmdb", cleanValue);
             return true;
         }
 

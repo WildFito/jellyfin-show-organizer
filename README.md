@@ -53,7 +53,7 @@ Because the plugin does not include a custom settings UI, the TMDB API key must 
 ShowOrganizer allows Jellyfin to organize TV shows using exact **TheMovieDb (TMDb) Episode Groups** (such as Sagas, Story Arcs, or Custom Broadcast Orders) while retaining the canonical episode metadata from TMDb.
 
 * **TheMovieDb Programme Id**: Identifies the canonical TMDb TV series (e.g. `61709`).
-* **TheMovieDb Show Group Programme Id**: Identifies the exact TMDb Episode Group used for custom ordering (e.g. `tmdb:648fc7202f8d0900e3864f62`).
+* **TheMovieDb Show Group Programme Id**: Identifies the exact TMDb Episode Group used for custom ordering (e.g. `648fc7202f8d0900e3864f62` or `tmdb:648fc7202f8d0900e3864f62`).
 * **Preserved Custom Numbering**: Your local Jellyfin season and episode numbers (SxxExx) remain unchanged. ShowOrganizer uses canonical TMDb coordinates behind the scenes to fetch metadata without renumbering your files.
 
 ---
@@ -89,8 +89,8 @@ Follow these steps to configure *Dragon Ball Z Kai* with its official **Saga Ord
 2. Click the three dots `...` and select **Edit Metadata**.
 3. In **TheMovieDb Programme Id**, verify or enter the canonical series ID:
    `61709`
-4. In **TheMovieDb Show Group Programme Id** (or NFO `<showorganizerid>`), enter the group reference:
-   `tmdb:648fc7202f8d0900e3864f62`
+4. In **TheMovieDb Show Group Programme Id** (or NFO `<showorganizerid>`), enter the TMDb Episode Group ID:
+   `648fc7202f8d0900e3864f62` *(Note: the `tmdb:` prefix is optional)*
 5. Click **Save**.
 6. Ensure **ShowOrganizer** is ordered above standard metadata providers in your library settings (**Dashboard -> Libraries -> TV Shows -> Manage Library -> Metadata Readers / Providers**).
 7. Refresh metadata for the series (**Refresh Metadata -> Replace all metadata**).
@@ -141,11 +141,11 @@ To enable ShowOrganizer for a series, write the group ID in the series level NFO
 <tvshow>
     <title>Dragon Ball Z Kai</title>
     <tmdbid>61709</tmdbid>
-    <showorganizerid>tmdb:648fc7202f8d0900e3864f62</showorganizerid>
+    <showorganizerid>648fc7202f8d0900e3864f62</showorganizerid>
 </tvshow>
 ```
 
-Alternatively, configure the value in the Jellyfin web interface under **Edit Metadata -> External IDs -> ShowOrganizer** with: `tmdb:648fc7202f8d0900e3864f62`.
+Alternatively, configure the value in the Jellyfin web interface under **Edit Metadata -> External IDs -> TheMovieDb Show Group** with: `648fc7202f8d0900e3864f62` (or `tmdb:648fc7202f8d0900e3864f62`).
 
 ## Repository Installation
 

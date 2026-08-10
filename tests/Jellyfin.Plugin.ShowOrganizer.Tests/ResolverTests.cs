@@ -203,6 +203,10 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         [Fact]
         public void ShowOrderReference_TryParse_ValidValues()
         {
+            Assert.True(ShowOrderReference.TryParse("648fc7202f8d0900e3864f62", out var resultRaw));
+            Assert.Equal("tmdb", resultRaw.Provider);
+            Assert.Equal("648fc7202f8d0900e3864f62", resultRaw.OrderId);
+
             Assert.True(ShowOrderReference.TryParse("tmdb:648fc7202f8d0900e3864f62", out var result));
             Assert.Equal("tmdb", result.Provider);
             Assert.Equal("648fc7202f8d0900e3864f62", result.OrderId);
@@ -218,7 +222,6 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             Assert.False(ShowOrderReference.TryParse(null, out _));
             Assert.False(ShowOrderReference.TryParse("", out _));
             Assert.False(ShowOrderReference.TryParse("   ", out _));
-            Assert.False(ShowOrderReference.TryParse("tmdb", out _));
             Assert.False(ShowOrderReference.TryParse("tmdb:", out _));
             Assert.False(ShowOrderReference.TryParse(":123", out _));
         }
@@ -1034,6 +1037,45 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
 
             var result = await provider.GetMetadata(info, CancellationToken.None);
             Assert.False(result.HasMetadata);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_RawTmdbGroupIdWithoutPrefix_PerformsMapping()
+        {
+            var cache = new TestMemoryCache();
+            var groupCollection = new TvGroupCollection
+            {
+                Id = "648fc7202f8d0900e3864f62",
+                Name = "Saga Order",
+                Groups = new List<TvGroup>
+                {
+                    new TvGroup
+                    {
+                        Order = 1,
+                        Name = "Saiyan Saga",
+                        Episodes = new List<TvGroupEpisode>
+                        {
+                            new TvGroupEpisode { Order = 0, SeasonNumber = 1, EpisodeNumber = 1 }
+                        }
+                    }
+                }
+            };
+            var mockService = new MockTmdbClientService(cache)
+            {
+                MockGroupCollection = groupCollection,
+                MockEpisode = new TvEpisode { Name = "Saiyan Arrival", Overview = "Raditz arrives" }
+            };
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // Raw ID without prefix
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.True(result.HasMetadata);
+            Assert.NotNull(result.Item);
+            Assert.Equal("Saiyan Arrival", result.Item.Name);
         }
     }
 }
