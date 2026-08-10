@@ -24,17 +24,29 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
         private readonly TmdbExactOrderResolver _resolver;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<ShowOrganizerEpisodeImageProvider> _logger;
+        private readonly ShowOrganizerEligibilityEvaluator _eligibilityEvaluator;
 
         public ShowOrganizerEpisodeImageProvider(
             TmdbClientService tmdbClientService,
             TmdbExactOrderResolver resolver,
             IHttpClientFactory httpClientFactory,
             ILogger<ShowOrganizerEpisodeImageProvider> logger)
+            : this(tmdbClientService, resolver, httpClientFactory, logger, null!)
+        {
+        }
+
+        public ShowOrganizerEpisodeImageProvider(
+            TmdbClientService tmdbClientService,
+            TmdbExactOrderResolver resolver,
+            IHttpClientFactory httpClientFactory,
+            ILogger<ShowOrganizerEpisodeImageProvider> logger,
+            ShowOrganizerEligibilityEvaluator eligibilityEvaluator)
         {
             _tmdbClientService = tmdbClientService;
             _resolver = resolver;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _eligibilityEvaluator = eligibilityEvaluator ?? new ShowOrganizerEligibilityEvaluator();
         }
 
         public int Order => 0;
@@ -61,31 +73,14 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return Enumerable.Empty<RemoteImageInfo>();
             }
 
-            var showOrganizerId = series.GetProviderId("ShowOrganizer");
-            if (string.IsNullOrWhiteSpace(showOrganizerId))
+            var eligibility = _eligibilityEvaluator.Evaluate(series.ProviderIds, _logger);
+            if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
             {
                 return Enumerable.Empty<RemoteImageInfo>();
             }
 
-            if (!ShowOrderReference.TryParse(showOrganizerId, out var orderRef))
-            {
-                _logger.LogWarning("ShowOrganizer ID '{Id}' is malformed.", showOrganizerId);
-                return Enumerable.Empty<RemoteImageInfo>();
-            }
-
-            if (orderRef.Provider != "tmdb")
-            {
-                _logger.LogWarning("ShowOrganizer provider '{Provider}' is unsupported.", orderRef.Provider);
-                return Enumerable.Empty<RemoteImageInfo>();
-            }
-
-            var seriesTmdbIdStr = series.GetProviderId(MetadataProvider.Tmdb.ToString());
-            var seriesTmdbId = Convert.ToInt32(seriesTmdbIdStr, CultureInfo.InvariantCulture);
-
-            if (seriesTmdbId <= 0)
-            {
-                return Enumerable.Empty<RemoteImageInfo>();
-            }
+            var orderRef = eligibility.OrderReference!;
+            var seriesTmdbId = eligibility.SeriesTmdbId;
 
             var seasonNumber = episode.ParentIndexNumber ?? 1;
             var episodeNumber = episode.IndexNumber;

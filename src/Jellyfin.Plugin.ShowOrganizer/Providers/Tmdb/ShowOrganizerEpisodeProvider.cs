@@ -39,17 +39,29 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
         private readonly TmdbExactOrderResolver _resolver;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<ShowOrganizerEpisodeProvider> _logger;
+        private readonly ShowOrganizerEligibilityEvaluator _eligibilityEvaluator;
 
         public ShowOrganizerEpisodeProvider(
             TmdbClientService tmdbClientService,
             TmdbExactOrderResolver resolver,
             IHttpClientFactory httpClientFactory,
             ILogger<ShowOrganizerEpisodeProvider> logger)
+            : this(tmdbClientService, resolver, httpClientFactory, logger, null!)
+        {
+        }
+
+        public ShowOrganizerEpisodeProvider(
+            TmdbClientService tmdbClientService,
+            TmdbExactOrderResolver resolver,
+            IHttpClientFactory httpClientFactory,
+            ILogger<ShowOrganizerEpisodeProvider> logger,
+            ShowOrganizerEligibilityEvaluator eligibilityEvaluator)
         {
             _tmdbClientService = tmdbClientService;
             _resolver = resolver;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _eligibilityEvaluator = eligibilityEvaluator ?? new ShowOrganizerEligibilityEvaluator();
         }
 
         public int Order => 0;
@@ -97,37 +109,31 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return metadataResult;
             }
 
-            // Check opt-in: Series.ProviderIds["ShowOrganizer"]
-            if (!info.SeriesProviderIds.TryGetValue("ShowOrganizer", out string? showOrganizerId) || string.IsNullOrWhiteSpace(showOrganizerId))
+            var eligibility = _eligibilityEvaluator.Evaluate(info.SeriesProviderIds, _logger);
+            if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
             {
-                return metadataResult; // No metadata, let next provider run
-            }
-
-            if (!ShowOrderReference.TryParse(showOrganizerId, out var orderRef))
-            {
-                _logger.LogWarning("ShowOrganizer ID '{Id}' is malformed.", showOrganizerId);
+                if (_logger.IsEnabled(LogLevel.Debug))
+                {
+                    _logger.LogDebug("ShowOrganizer: Episode provider declined item S{Season:02}E{Episode:02} for series. Reason: {State}",
+                        info.ParentIndexNumber ?? 1, info.IndexNumber, eligibility.State);
+                }
                 return metadataResult;
             }
 
-            if (orderRef.Provider != "tmdb")
-            {
-                _logger.LogWarning("ShowOrganizer provider '{Provider}' is unsupported.", orderRef.Provider);
-                return metadataResult;
-            }
-
-            info.SeriesProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out string? tmdbId);
-            var seriesTmdbId = Convert.ToInt32(tmdbId, CultureInfo.InvariantCulture);
-            if (seriesTmdbId <= 0)
-            {
-                return metadataResult;
-            }
-
+            var orderRef = eligibility.OrderReference!;
+            var seriesTmdbId = eligibility.SeriesTmdbId;
             var seasonNumber = info.ParentIndexNumber ?? 1;
             var episodeNumber = info.IndexNumber;
 
             if (!episodeNumber.HasValue)
             {
                 return metadataResult;
+            }
+
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug("ShowOrganizer: Resolving custom S{Season:02}E{Episode:02} for series TMDb {SeriesId} using group {GroupId}.",
+                    seasonNumber, episodeNumber.Value, seriesTmdbId, orderRef.OrderId);
             }
 
             var (resolvedSeason, resolvedEpisode) = await _resolver.ResolveCoordinatesAsync(
@@ -140,11 +146,10 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
 
             if (resolvedSeason <= 0 || resolvedEpisode <= 0)
             {
-                var failKey = $"{seriesTmdbId}:{orderRef.OrderId}:S{seasonNumber}E{episodeNumber.Value}";
-                if (_loggedFailedMappings.TryAdd(failKey, true))
+                if (_logger.IsEnabled(LogLevel.Debug))
                 {
-                    _logger.LogWarning(
-                        "ShowOrganizer: Failed to map custom S{Season:02}E{Episode:02} (End={IndexEnd}, Lang={Lang}, Country={Country}) for series TMDb {SeriesId} using group {GroupId}.",
+                    _logger.LogDebug(
+                        "ShowOrganizer: Could not map custom S{Season:02}E{Episode:02} (End={IndexEnd}, Lang={Lang}, Country={Country}) for series TMDb {SeriesId} using group {GroupId}.",
                         seasonNumber, episodeNumber.Value, info.IndexNumberEnd, info.MetadataLanguage, info.MetadataCountryCode, seriesTmdbId, orderRef.OrderId);
                 }
                 metadataResult.HasMetadata = false;
@@ -155,9 +160,13 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
             var activationKey = $"{seriesTmdbId}:{orderRef.OrderId}";
             if (_activatedSeriesGroups.TryAdd(activationKey, true))
             {
-                _logger.LogInformation("Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
+                _logger.LogInformation("ShowOrganizer: Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
             }
-            _logger.LogDebug("Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.", seasonNumber, episodeNumber.Value, resolvedSeason, resolvedEpisode, orderRef.OrderId);
+
+            if (_logger.IsEnabled(LogLevel.Debug))
+            {
+                _logger.LogDebug("ShowOrganizer: Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.", seasonNumber, episodeNumber.Value, resolvedSeason, resolvedEpisode, orderRef.OrderId);
+            }
 
             TvEpisode? episodeResult = null;
             if (info.IndexNumberEnd.HasValue)

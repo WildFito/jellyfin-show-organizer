@@ -21,15 +21,26 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
         private readonly TmdbClientService _tmdbClientService;
         private readonly IHttpClientFactory _httpClientFactory;
         private readonly ILogger<ShowOrganizerSeasonProvider> _logger;
+        private readonly ShowOrganizerEligibilityEvaluator _eligibilityEvaluator;
 
         public ShowOrganizerSeasonProvider(
             TmdbClientService tmdbClientService,
             IHttpClientFactory httpClientFactory,
             ILogger<ShowOrganizerSeasonProvider> logger)
+            : this(tmdbClientService, httpClientFactory, logger, null!)
+        {
+        }
+
+        public ShowOrganizerSeasonProvider(
+            TmdbClientService tmdbClientService,
+            IHttpClientFactory httpClientFactory,
+            ILogger<ShowOrganizerSeasonProvider> logger,
+            ShowOrganizerEligibilityEvaluator eligibilityEvaluator)
         {
             _tmdbClientService = tmdbClientService;
             _httpClientFactory = httpClientFactory;
             _logger = logger;
+            _eligibilityEvaluator = eligibilityEvaluator ?? new ShowOrganizerEligibilityEvaluator();
         }
 
         public string Name => "ShowOrganizer";
@@ -38,29 +49,14 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
         {
             var result = new MetadataResult<Season>();
 
-            if (!info.SeriesProviderIds.TryGetValue("ShowOrganizer", out string? showOrganizerId) || string.IsNullOrWhiteSpace(showOrganizerId))
+            var eligibility = _eligibilityEvaluator.Evaluate(info.SeriesProviderIds, _logger);
+            if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
             {
                 return result;
             }
 
-            if (!ShowOrderReference.TryParse(showOrganizerId, out var orderRef))
-            {
-                _logger.LogWarning("ShowOrganizer ID '{Id}' is malformed.", showOrganizerId);
-                return result;
-            }
-
-            if (orderRef.Provider != "tmdb")
-            {
-                _logger.LogWarning("ShowOrganizer provider '{Provider}' is unsupported.", orderRef.Provider);
-                return result;
-            }
-
-            info.SeriesProviderIds.TryGetValue(MetadataProvider.Tmdb.ToString(), out string? tmdbId);
-            var seriesTmdbId = Convert.ToInt32(tmdbId, CultureInfo.InvariantCulture);
-            if (seriesTmdbId <= 0)
-            {
-                return result;
-            }
+            var orderRef = eligibility.OrderReference!;
+            var seriesTmdbId = eligibility.SeriesTmdbId;
 
             var customSeasonNumber = info.IndexNumber;
             if (!customSeasonNumber.HasValue || customSeasonNumber.Value <= 0)

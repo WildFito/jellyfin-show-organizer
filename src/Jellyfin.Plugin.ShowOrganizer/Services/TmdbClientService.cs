@@ -24,10 +24,23 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
         private readonly object _configTaskLock = new object();
         private Task? _configInitializationTask;
         private static bool _credentialLogged = false;
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _negativeGroupCache = new(StringComparer.Ordinal);
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _loggedNotFoundWarnings = new(StringComparer.Ordinal);
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<TvGroupCollection?>> _inFlightGroupRequests = new(StringComparer.Ordinal);
 
         public static void ResetCredentialLogged()
         {
             _credentialLogged = false;
+        }
+
+        public static int ResetState()
+        {
+            _credentialLogged = false;
+            var count = _negativeGroupCache.Count + _loggedNotFoundWarnings.Count + _inFlightGroupRequests.Count;
+            _negativeGroupCache.Clear();
+            _loggedNotFoundWarnings.Clear();
+            _inFlightGroupRequests.Clear();
+            return count;
         }
 
         public TmdbClientService(IMemoryCache memoryCache)
@@ -282,25 +295,52 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
 
             if (_memoryCache.TryGetValue(key, out TvGroupCollection? cachedCollection))
             {
-                _logger?.LogDebug("Cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
+                _logger?.LogDebug("ShowOrganizer: Cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
                 return cachedCollection;
+            }
+
+            var negKey = $"neg-{key}";
+            if (_negativeGroupCache.TryGetValue(negKey, out var expiryUtc))
+            {
+                if (DateTime.UtcNow < expiryUtc)
+                {
+                    _logger?.LogDebug("ShowOrganizer: Negative cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
+                    return null;
+                }
+                _negativeGroupCache.TryRemove(negKey, out _);
             }
 
             var client = GetClient();
             if (client == null)
             {
-                _logger?.LogDebug("Skipping TMDb episode group retrieval for series {SeriesId}: No usable TMDb client.", tvShowId);
+                _logger?.LogDebug("ShowOrganizer: Skipping TMDb episode group retrieval for series {SeriesId}: No usable TMDb client.", tvShowId);
                 return null;
             }
 
+            try
+            {
+                var fetchTask = _inFlightGroupRequests.GetOrAdd(key, k => FetchGroupFromApiAsync(client, tvShowId, groupId, normalizedLanguage, k, cancellationToken));
+                return await fetchTask.ConfigureAwait(false);
+            }
+            finally
+            {
+                _inFlightGroupRequests.TryRemove(key, out _);
+            }
+        }
+
+        protected virtual async Task<TvGroupCollection?> FetchGroupFromApiAsync(TMDbClient client, int tvShowId, string groupId, string? normalizedLanguage, string key, CancellationToken cancellationToken)
+        {
             TvGroupCollection? collection = null;
+            bool requestExceptionThrown = false;
+
             try
             {
                 collection = await client.GetTvEpisodeGroupsAsync(groupId, normalizedLanguage, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception ex)
             {
-                _logger?.LogWarning(ex, "Failed to retrieve TMDb episode group {GroupId} for series {SeriesId}: API request exception.", groupId, tvShowId);
+                requestExceptionThrown = true;
+                _logger?.LogError(ex, "ShowOrganizer: Failed to retrieve TMDb episode group {GroupId} for series {SeriesId}: Network or API exception.", groupId, tvShowId);
                 return null;
             }
 
@@ -311,14 +351,21 @@ namespace Jellyfin.Plugin.ShowOrganizer.Services
                 var rawName = collection.Name?.Trim();
                 var groupName = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim('"');
 
-                _logger?.LogInformation("Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
-            }
-            else
-            {
-                _logger?.LogWarning("Failed to retrieve TMDb episode group {GroupId} for series {SeriesId}: Group not found or TMDb API error.", groupId, tvShowId);
+                _logger?.LogInformation("ShowOrganizer: Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
+                return collection;
             }
 
-            return collection;
+            if (!requestExceptionThrown)
+            {
+                var negKey = $"neg-{key}";
+                _negativeGroupCache[negKey] = DateTime.UtcNow.AddMinutes(10);
+                if (_loggedNotFoundWarnings.TryAdd(negKey, true))
+                {
+                    _logger?.LogWarning("ShowOrganizer: TMDb Episode Group '{GroupId}' was not found for series TMDb {SeriesId}.", groupId, tvShowId);
+                }
+            }
+
+            return null;
         }
 
         public virtual async Task<TvEpisode?> GetTvEpisodeAsync(int tvShowId, int seasonNumber, int episodeNumber, string? language, string? imageLanguages, string? countryCode, CancellationToken cancellationToken)

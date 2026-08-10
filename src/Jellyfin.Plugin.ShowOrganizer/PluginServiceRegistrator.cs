@@ -9,6 +9,7 @@ namespace Jellyfin.Plugin.ShowOrganizer
     {
         public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
         {
+            serviceCollection.AddTransient<ShowOrganizerEligibilityEvaluator>();
             serviceCollection.AddTransient<TmdbClientService>();
             serviceCollection.AddTransient<TmdbExactOrderResolver>();
         }

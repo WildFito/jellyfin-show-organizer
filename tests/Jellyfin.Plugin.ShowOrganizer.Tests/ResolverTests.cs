@@ -19,6 +19,7 @@ using MediaBrowser.Model.Providers;
 using MediaBrowser.Model.Updates;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Primitives;
 using TMDbLib.Client;
@@ -1108,6 +1109,197 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                     Assert.Equal(expectedVersion, fileVersion);
                 }
             }
+        }
+
+        [Fact]
+        public async Task Eligibility_NoShowGroupConfigured_DeclinesSilentlyWithoutWarningsOrNetwork()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            var logger = new TestLogger<ShowOrganizerEpisodeProvider>();
+            var mockService = new MockTmdbClientService(new TestMemoryCache());
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709"; // Only TMDb ID, no ShowOrganizer ID
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+            Assert.DoesNotContain(logger.LogEntries, l => l.Level == LogLevel.Warning);
+            Assert.DoesNotContain(logger.LogEntries, l => l.Level == LogLevel.Error);
+        }
+
+        [Fact]
+        public async Task Eligibility_ShowGroupConfigured_TmdbIdMissing_LogsWarningOnceAcrossEpisodes_AndReevaluatesOnConfigUpdate()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            var logger = new TestLogger<ShowOrganizerEpisodeProvider>();
+            var mockService = new MockTmdbClientService(new TestMemoryCache());
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
+
+            var info1 = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info1.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // ShowOrganizer ID set, TMDb ID missing
+
+            var info2 = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 2, MetadataLanguage = "en" };
+            info2.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62";
+
+            var res1 = await provider.GetMetadata(info1, CancellationToken.None);
+            var res2 = await provider.GetMetadata(info2, CancellationToken.None);
+
+            Assert.False(res1.HasMetadata);
+            Assert.False(res2.HasMetadata);
+
+            var warnings = logger.LogEntries.Where(l => l.Level == LogLevel.Warning).ToList();
+            Assert.Single(warnings);
+            Assert.Contains("TheMovieDb Programme Id is missing", warnings[0].Message);
+
+            // Now user updates configuration to add TMDb ID 61709
+            var infoUpdated = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            infoUpdated.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62";
+            infoUpdated.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            mockService.MockGroupCollection = new TvGroupCollection
+            {
+                Id = "648fc7202f8d0900e3864f62",
+                Groups = new List<TvGroup>
+                {
+                    new TvGroup
+                    {
+                        Order = 1,
+                        Episodes = new List<TvGroupEpisode> { new TvGroupEpisode { Order = 0, SeasonNumber = 1, EpisodeNumber = 1 } }
+                    }
+                }
+            };
+            mockService.MockEpisode = new TvEpisode { Name = "Updated Episode" };
+
+            var resUpdated = await provider.GetMetadata(infoUpdated, CancellationToken.None);
+            Assert.True(resUpdated.HasMetadata);
+            Assert.Equal("Updated Episode", resUpdated.Item?.Name);
+        }
+
+        [Fact]
+        public async Task Eligibility_MalformedShowGroup_LogsWarningOnce()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            var logger = new TestLogger<ShowOrganizerEpisodeProvider>();
+            var mockService = new MockTmdbClientService(new TestMemoryCache());
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
+
+            var info1 = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info1.SeriesProviderIds["ShowOrganizer"] = "tmdb:"; // Malformed colon reference
+            info1.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var info2 = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 2, MetadataLanguage = "en" };
+            info2.SeriesProviderIds["ShowOrganizer"] = "tmdb:";
+            info2.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            await provider.GetMetadata(info1, CancellationToken.None);
+            await provider.GetMetadata(info2, CancellationToken.None);
+
+            var warnings = logger.LogEntries.Where(l => l.Level == LogLevel.Warning).ToList();
+            Assert.Single(warnings);
+            Assert.Contains("is malformed", warnings[0].Message);
+        }
+
+        [Fact]
+        public async Task Eligibility_UnsupportedProviderPrefix_LogsWarningOnce()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            var logger = new TestLogger<ShowOrganizerEpisodeProvider>();
+            var mockService = new MockTmdbClientService(new TestMemoryCache());
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
+
+            var info1 = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info1.SeriesProviderIds["ShowOrganizer"] = "tvdb:12345";
+            info1.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var info2 = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 2, MetadataLanguage = "en" };
+            info2.SeriesProviderIds["ShowOrganizer"] = "tvdb:12345";
+            info2.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            await provider.GetMetadata(info1, CancellationToken.None);
+            await provider.GetMetadata(info2, CancellationToken.None);
+
+            var warnings = logger.LogEntries.Where(l => l.Level == LogLevel.Warning).ToList();
+            Assert.Single(warnings);
+            Assert.Contains("unsupported", warnings[0].Message);
+        }
+
+        private class TestableNotFoundTmdbClientService : TmdbClientService
+        {
+            public int ApiCallsCount { get; private set; }
+
+            public TestableNotFoundTmdbClientService(IMemoryCache cache, ILogger<TmdbClientService> logger)
+                : base(cache, null, logger)
+            {
+            }
+
+            protected override TMDbClient? GetClient() => new TMDbClient("dummy");
+
+            protected override Task<TvGroupCollection?> FetchGroupFromApiAsync(TMDbClient client, int tvShowId, string groupId, string? normalizedLanguage, string key, CancellationToken cancellationToken)
+            {
+                ApiCallsCount++;
+                var negKey = $"neg-{key}";
+                var field = typeof(TmdbClientService).GetField("_negativeGroupCache", BindingFlags.NonPublic | BindingFlags.Static);
+                var dict = field?.GetValue(null) as System.Collections.Concurrent.ConcurrentDictionary<string, DateTime>;
+                if (dict != null)
+                {
+                    dict[negKey] = DateTime.UtcNow.AddMinutes(10);
+                }
+
+                var warnField = typeof(TmdbClientService).GetField("_loggedNotFoundWarnings", BindingFlags.NonPublic | BindingFlags.Static);
+                var warnDict = warnField?.GetValue(null) as System.Collections.Concurrent.ConcurrentDictionary<string, bool>;
+                if (warnDict != null && warnDict.TryAdd(negKey, true))
+                {
+                    var loggerField = typeof(TmdbClientService).GetField("_logger", BindingFlags.NonPublic | BindingFlags.Instance);
+                    var logger = loggerField?.GetValue(this) as ILogger<TmdbClientService>;
+                    logger?.LogWarning("ShowOrganizer: TMDb Episode Group '{GroupId}' was not found for series TMDb {SeriesId}.", groupId, tvShowId);
+                }
+                return Task.FromResult<TvGroupCollection?>(null);
+            }
+        }
+
+        [Fact]
+        public async Task Eligibility_DefinitiveGroupNotFound_LogsWarningOnceAndNegativeCaches()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            TmdbClientService.ResetState();
+
+            var serviceLogger = new TestLogger<TmdbClientService>();
+            var memoryCache = new TestMemoryCache();
+            var service = new TestableNotFoundTmdbClientService(memoryCache, serviceLogger);
+
+            // First lookup for group that returns null (not found)
+            var col1 = await service.GetTvEpisodeGroupsAsync(61709, "non_existent_group", "en", CancellationToken.None);
+            var col2 = await service.GetTvEpisodeGroupsAsync(61709, "non_existent_group", "en", CancellationToken.None);
+
+            Assert.Null(col1);
+            Assert.Null(col2);
+            Assert.Equal(1, service.ApiCallsCount); // Second call hit negative cache, so API was called only once!
+
+            var warnings = serviceLogger.LogEntries.Where(l => l.Level == LogLevel.Warning).ToList();
+            Assert.Single(warnings);
+            Assert.Contains("was not found for series TMDb 61709", warnings[0].Message);
+
+            var debugLogs = serviceLogger.LogEntries.Where(l => l.Level == LogLevel.Debug && l.Message.Contains("Negative cache hit")).ToList();
+            Assert.Single(debugLogs);
+        }
+    }
+
+    public class TestLogger<T> : ILogger<T>
+    {
+        public List<(LogLevel Level, string Message)> LogEntries { get; } = new();
+
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            LogEntries.Add((logLevel, formatter(state, exception)));
         }
     }
 }

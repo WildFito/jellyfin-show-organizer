@@ -181,15 +181,50 @@ graph TD
 
 ---
 
-## H. Episode Group Caching
+## H. Series Eligibility Evaluation & Fingerprint Caching
 
-To optimize scan performance and avoid hitting TMDb rate limits during large library scans, `TmdbClientService` caches retrieved TMDb Episode Group payloads (`TvGroupCollection`):
+To avoid performing repetitive local string parsing and provider ID dictionary lookups on every episode call, `ShowOrganizerEligibilityEvaluator` evaluates series configuration state:
 
-* **Cache Layer**: Uses Jellyfin's shared `IMemoryCache`.
-* **Cache Key Format**: `$"group-{tvShowId}-{groupId}-{normalizedLanguage}"`
-* **Cache Duration**: 1 hour (`TimeSpan.FromHours(1)`).
-* **Caching Condition**: Group payloads are cached only when TMDb returns a valid collection containing non-null groups (`collection != null && collection.Groups != null`).
-* **Unsuccessful Lookups**: Null, missing, or failed API group lookups are **not cached**, allowing future metadata refresh attempts to retry instantly.
+* **States**:
+  1. `Inactive`: No `ShowOrganizer` ID configured. ShowOrganizer cleanly declines.
+  2. `InvalidMissingTmdbId`: `ShowOrganizer` ID present, but canonical `Tmdb` series ID missing/invalid.
+  3. `InvalidReference`: `ShowOrganizer` value malformed.
+  4. `UnsupportedProvider`: Legacy provider prefix is not `tmdb`.
+  5. `Eligible`: Valid `ShowOrganizer` group ID and `Tmdb` series ID present.
+* **Configuration Fingerprint**: `$"STATE|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}"`
+  Because the fingerprint is derived directly from raw configuration values, editing series metadata immediately invalidates prior state without requiring plugin restarts.
+* **Warning Deduplication**: Warnings for invalid/malformed configuration states are emitted **once per series + configuration fingerprint**, avoiding repeated warning log output across multi-episode library scans.
+
+---
+
+## I. Episode Group Caching & Request Coalescing
+
+`TmdbClientService` manages Episode Group payload lifecycle to optimize library scan performance:
+
+1. **Positive Caching**:
+   * **Cache Layer**: Shared `IMemoryCache`.
+   * **Key Format**: `$"group-{tvShowId}-{groupId}-{normalizedLanguage}"`
+   * **Duration**: 1 hour (`TimeSpan.FromHours(1)`).
+   * **Condition**: Cached when TMDb API returns a valid `TvGroupCollection` containing groups.
+2. **Negative Caching (Definitive Not-Found)**:
+   * When TMDb API explicitly returns a null/not-found group response (without throwing transport exceptions), the result is stored in `_negativeGroupCache` (`$"neg-{key}"`) with a **10-minute TTL** (`TimeSpan.FromMinutes(10)`).
+   * A `Warning` log is emitted **once** per group configuration state.
+   * Temporary network/transport exceptions (`HttpRequestException`, timeouts) are **not** negative-cached, allowing retries upon network recovery.
+3. **In-Flight Request Coalescing**:
+   * `_inFlightGroupRequests` (`ConcurrentDictionary<string, Task<TvGroupCollection?>>`) tracks active TMDb API requests. Parallel episode queries for the same series group share a single in-flight TMDb API call.
+
+---
+
+## J. Logging Classification Policy
+
+ShowOrganizer uses standard `ILogger` levels across all builds (including production Release binaries):
+
+| Level | Usage / Scenarios |
+| :--- | :--- |
+| **`Information`** | Major plugin lifecycle events (plugin startup/shutdown) and once-per-series activation notices. |
+| **`Warning`** | User-correctable configuration issues (missing TMDb ID, malformed group ID, unsupported provider prefix, non-existent TMDb group ID). Deduplicated per configuration state. |
+| **`Error`** | Unexpected runtime/API exceptions, network transport failures, or unrecoverable system errors. |
+| **`Debug`** | High-frequency operational tracing: per-episode provider invocation, coordinate mapping steps (`SxxExx` $\rightarrow$ canonical `SxxExx`), unmappable episode details, cache hits/misses. Enabled via category override `Jellyfin.Plugin.ShowOrganizer = Debug`. |
 
 ---
 

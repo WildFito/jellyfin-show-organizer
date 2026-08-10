@@ -44,7 +44,24 @@ To install the plugin manually into a Jellyfin server running in a Docker contai
 
 ## Logging and Troubleshooting
 
-ShowOrganizer logs its operations using Jellyfin's standard logging framework. You can inspect Jellyfin's logs to verify if it is running correctly.
+ShowOrganizer uses Jellyfin's standard logging framework (`ILogger`). Operational tracing (per-episode mapping steps, cache hits/misses, coordinate resolution) is logged at `LogLevel.Debug` in the standard Release build.
 
-* Look for logs containing `[ShowOrganizer]` or namespace references.
-* Warning log messages will be generated if a configured ShowOrganizer ID is malformed or uses an unsupported provider type.
+* **Information**: Emitted for major plugin lifecycle events and once-per-series plugin activation.
+* **Warning**: Emitted once per series configuration state for user-correctable configuration issues (e.g. missing TMDb Programme Id, malformed group ID, unsupported provider prefix, or non-existent TMDb Episode Group).
+* **Error**: Emitted for unexpected runtime/API/network exceptions.
+* **Debug**: Operational tracing per episode invocation (resolution steps, coordinate mapping, unmappable episode details, cache hits/misses).
+
+### Enabling Debug Logging in Jellyfin
+
+To enable detailed Debug logging for ShowOrganizer without changing the global Jellyfin log level, add a category override for `Jellyfin.Plugin.ShowOrganizer` in your Jellyfin server's logging configuration:
+
+```json
+"Serilog": {
+  "MinimumLevel": {
+    "Default": "Information",
+    "Override": {
+      "Jellyfin.Plugin.ShowOrganizer": "Debug"
+    }
+  }
+}
+```
