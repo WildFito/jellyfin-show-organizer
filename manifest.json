@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",
         "versions": [
             {
+                "version": "0.2.0.0",
+                "changelog": "Update plugin manifest and overview descriptions to reflect TMDb Episode Group ordering and custom coordinate mapping, and bump version to 0.2.0.0.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/WildFito/jellyfin-show-organizer/releases/download/v0.2.0.0/showorganizer_0.2.0.0.zip",
+                "checksum": "b6a350298cde8df5a035cd0a8a8614f7",
+                "timestamp": "2026-08-10T20:24:33Z"
+            },
+            {
                 "version": "0.1.7.0",
                 "changelog": "Restore 1-based TMDb group order mapping to fix season/saga shift regression, add deduplicated failure logging with full EpisodeInfo context, clean structured log quotes, and enforce once-per-lifecycle credential logging.",
                 "targetAbi": "10.11.0.0",
