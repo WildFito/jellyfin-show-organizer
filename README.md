@@ -11,6 +11,9 @@ ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a sp
 * **Supported Jellyfin Server Version**: 10.11.x (currently built and tested against **10.11.11**, targetAbi `10.11.0.0`)
 * **Supported Metadata Provider**: [The Movie Database (TMDb)](https://www.themoviedb.org/)
 
+> [!IMPORTANT]
+> **Provider priority:** In the relevant Jellyfin TV metadata provider settings, place **ShowOrganizer first** so it gets the first opportunity to resolve episodes using the selected TMDb Episode Group. If ShowOrganizer cannot provide metadata for an item, Jellyfin can continue to the following configured provider.
+
 ## Installation
 
 ### Repository Installation (Recommended)
@@ -48,11 +51,13 @@ To configure a show, you need two IDs from [The Movie Database (TMDb)](https://w
 
 1. Open the TV series in your Jellyfin web interface.
 2. Click the three dots `...` and select **Edit Metadata**.
-3. Set **TheMovieDb Programme Id**:
-   `61709`
-4. Set **TheMovieDb Show Group Programme Id**:
-   `648fc7202f8d0900e3864f62`
-5. Click **Save**.
+3. Enter the standard TMDb series ID and the Episode Group ID in the corresponding fields:
+   * **TheMovieDb Programme Id**: `61709`
+   * **TheMovieDb Show Group Programme Id**: `648fc7202f8d0900e3864f62`
+
+![Jellyfin External IDs Configuration](assets/showorganizer-external-ids.png)
+
+4. Click **Save**.
 
 > [!NOTE]
 > Depending on your Jellyfin language/locale setting, *Programme Id* may appear as *Series Id*.
