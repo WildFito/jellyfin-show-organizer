@@ -9,7 +9,7 @@ This document describes the manual-dispatch, validate-first release procedure fo
 Our release process enforces a strict consistency contract between the metadata version, git tags, and release archives.
 
 * **Authoritative Source**: The version defined in `build.yaml` (under `version: "X.X.X.X"`) is the single source of truth.
-* **Tag Naming**: Git tags must be prefixed with a `v` followed by the exact version (e.g., `v0.1.0.0`).
+* **Tag Naming**: Git tags must be prefixed with a `v` followed by the exact version (e.g., `vX.Y.Z.W`).
 * **Validation Order**: The workflow validates the package contents, build, and tests *before* creating any Git tags or GitHub Releases.
 
 > [!IMPORTANT]
@@ -24,16 +24,16 @@ Our release process enforces a strict consistency contract between the metadata 
 Follow these steps to publish a new release of the plugin:
 
 ### 1. Update Version and Notes
-1. Choose a new four-part version number (e.g. `0.1.0.0`).
+1. Choose a new four-part version number (e.g. `X.Y.Z.W`).
 2. Open `build.yaml` and update the `version` property to the new string:
    ```yaml
-   version: "0.1.0.0"
+   version: "X.Y.Z.W"
    ```
 3. Update the `changelog` property in `build.yaml` with user-facing release notes.
 4. Commit and push your changes to `main`:
    ```bash
    git add build.yaml
-   git commit -m "Bump version to 0.1.0.0 and update changelog"
+   git commit -m "Bump version to X.Y.Z.W and update changelog"
    git push origin main
    ```
 5. Wait for the standard push/PR CI workflow (`build.yml`) to pass on GitHub.

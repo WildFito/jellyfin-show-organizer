@@ -109,7 +109,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
                 return metadataResult;
             }
 
-            var seriesIdentity = info.Path ?? info.Name;
+            var seriesIdentity = ShowOrganizerEligibilityEvaluator.GetSeriesIdentity(info);
             var eligibility = _eligibilityEvaluator.Evaluate(info.SeriesProviderIds, seriesIdentity, _logger);
             if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
             {

@@ -26,8 +26,19 @@ dotnet test
 
 The test suite covers:
 * `ShowOrderReference` format parsing.
-* Dragon Ball Z Kai Saga Order boundary mapping tests.
+* Exact coordinate mapping invariants and boundary mapping tests.
+* Stateless eligibility evaluation and warning deduplication.
+* Episode Group positive caching, negative caching, and request coalescing.
 * Opt-in provider checks verifying that if the ShowOrganizer ID is missing, no network calls are initiated.
+
+## Packaging & Local Release Verification
+
+To package the plugin zip and run the automated release package verifier locally:
+
+```bash
+python -m jprm plugin build . --output=./artifacts
+dotnet run --project tools/ReleaseVerifier/ReleaseVerifier.csproj "artifacts/showorganizer_1.0.0.0.zip" build.yaml
+```
 
 ## Local Deployment (Docker/UNRAID)
 

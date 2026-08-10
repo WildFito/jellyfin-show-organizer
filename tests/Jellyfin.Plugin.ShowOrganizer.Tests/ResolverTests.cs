@@ -1179,6 +1179,32 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
+        public async Task Eligibility_SameSeriesAcrossMultipleEpisodes_LogsExactlyOneWarningTotal()
+        {
+            ShowOrganizerEligibilityEvaluator.ResetState();
+            var logger = new TestLogger<ShowOrganizerEpisodeProvider>();
+            var mockService = new MockTmdbClientService(new TestMemoryCache());
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
+
+            var ep1 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/DBZ Kai/Season 01/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            ep1.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // TMDb ID missing
+
+            var ep2 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/DBZ Kai/Season 01/S01E02.mkv", ParentIndexNumber = 1, IndexNumber = 2, MetadataLanguage = "en" };
+            ep2.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62";
+
+            var ep3 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/DBZ Kai/Season 02/S02E01.mkv", ParentIndexNumber = 2, IndexNumber = 1, MetadataLanguage = "en" };
+            ep3.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62";
+
+            await provider.GetMetadata(ep1, CancellationToken.None);
+            await provider.GetMetadata(ep2, CancellationToken.None);
+            await provider.GetMetadata(ep3, CancellationToken.None);
+
+            var warnings = logger.LogEntries.Where(l => l.Level == LogLevel.Warning).ToList();
+            Assert.Single(warnings); // Exactly 1 warning total for the entire series!
+        }
+
+        [Fact]
         public async Task Eligibility_TwoDifferentSeriesWithSameDisplayName_EmitWarningsForBothSeries()
         {
             ShowOrganizerEligibilityEvaluator.ResetState();
@@ -1187,10 +1213,10 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             var resolver = new TmdbExactOrderResolver(mockService);
             var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, logger);
 
-            var infoSeries1 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/CutA/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            var infoSeries1 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/CutA/Season 01/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
             infoSeries1.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // TMDb ID missing
 
-            var infoSeries2 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/CutB/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            var infoSeries2 = new EpisodeInfo { Name = "Dragon Ball Z Kai", Path = "/library/CutB/Season 01/S01E01.mkv", ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
             infoSeries2.SeriesProviderIds["ShowOrganizer"] = "648fc7202f8d0900e3864f62"; // TMDb ID missing
 
             await provider.GetMetadata(infoSeries1, CancellationToken.None);

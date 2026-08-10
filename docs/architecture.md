@@ -181,19 +181,26 @@ graph TD
 
 ---
 
-## H. Series Eligibility Evaluation & Fingerprint Caching
+## H. Series Eligibility Evaluation & Warning Deduplication
 
-To avoid performing repetitive local string parsing and provider ID dictionary lookups on every episode call, `ShowOrganizerEligibilityEvaluator` evaluates series configuration state:
+To provide clean separation of validation logic without overhead, `ShowOrganizerEligibilityEvaluator` evaluates series configuration state statelessly on every invocation without caching eligibility result objects:
 
-* **States**:
+* **Evaluation States**:
   1. `Inactive`: No `ShowOrganizer` ID configured. ShowOrganizer cleanly declines.
   2. `InvalidMissingTmdbId`: `ShowOrganizer` ID present, but canonical `Tmdb` series ID missing/invalid.
   3. `InvalidReference`: `ShowOrganizer` value malformed.
   4. `UnsupportedProvider`: Legacy provider prefix is not `tmdb`.
   5. `Eligible`: Valid `ShowOrganizer` group ID and `Tmdb` series ID present.
-* **Configuration Fingerprint**: `$"STATE|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}"`
-  Because the fingerprint is derived directly from raw configuration values, editing series metadata immediately invalidates prior state without requiring plugin restarts.
-* **Warning Deduplication**: Warnings for invalid/malformed configuration states are emitted **once per series + configuration fingerprint**, avoiding repeated warning log output across multi-episode library scans.
+* **Stable Series Identity**:
+  To ensure warning deduplication operates at the series level across episodes while supporting multiple cuts/editions:
+  * Filesystem path resolution extracts the series root directory (`PATH:{seriesDirectory}`), stripping season subfolders (`Season 01`, `Season 02`, `Specials`).
+  * External provider IDs (`PIDS:{providerIds}`) or Jellyfin internal series GUID (`GUID:{seriesGuid}`) are used when available.
+  * Series display name (`NAME:{name}`) acts as a fallback.
+* **Warning Deduplication Key**:
+  ```
+  SERIES:{stableSeriesIdentity}|{WARNING_TYPE}|SO:{cleanShowOrganizerId}|TMDB:{cleanTmdbId}
+  ```
+  Warnings for user-correctable configuration problems are logged **once per series + configuration state** (`_loggedWarnings`). Updating series configuration in Jellyfin generates a new key fingerprint, enabling immediate re-evaluation without plugin restarts.
 
 ---
 
@@ -203,15 +210,15 @@ To avoid performing repetitive local string parsing and provider ID dictionary l
 
 1. **Positive Caching**:
    * **Cache Layer**: Shared `IMemoryCache`.
-   * **Key Format**: `$"group-{tvShowId}-{groupId}-{normalizedLanguage}"`
+   * **Key Format**: `group-{tvShowId}-{groupId}-{normalizedLanguage}`
    * **Duration**: 1 hour (`TimeSpan.FromHours(1)`).
    * **Condition**: Cached when TMDb API returns a valid `TvGroupCollection` containing groups.
-2. **Negative Caching (Definitive Not-Found)**:
-   * When TMDb API explicitly returns a null/not-found group response (without throwing transport exceptions), the result is stored in `_negativeGroupCache` (`$"neg-{key}"`) with a **10-minute TTL** (`TimeSpan.FromMinutes(10)`).
+2. **Negative Caching (Definitive Not-Found Only)**:
+   * When TMDb API explicitly returns a null/not-found group response without throwing transport exceptions, the result is stored in `_negativeGroupCache` (`neg-group-{tvShowId}-{groupId}-{normalizedLanguage}`) with a **10-minute TTL** (`TimeSpan.FromMinutes(10)`).
    * A `Warning` log is emitted **once** per group configuration state.
-   * Temporary network/transport exceptions (`HttpRequestException`, timeouts) are **not** negative-cached, allowing retries upon network recovery.
+   * Temporary network/transport exceptions (`HttpRequestException`, timeouts) are **not** negative-cached, allowing immediate retries upon network recovery.
 3. **In-Flight Request Coalescing**:
-   * `_inFlightGroupRequests` (`ConcurrentDictionary<string, Task<TvGroupCollection?>>`) tracks active TMDb API requests. Parallel episode queries for the same series group share a single in-flight TMDb API call.
+   * `_inFlightGroupRequests` (`ConcurrentDictionary<string, Task<TvGroupCollection?>>`) tracks active TMDb API requests. Parallel episode queries for the same series group share a single in-flight TMDb API call using identical key dimensions (`tvShowId`, `groupId`, `normalizedLanguage`).
 
 ---
 
@@ -222,40 +229,37 @@ ShowOrganizer uses standard `ILogger` levels across all builds (including produc
 | Level | Usage / Scenarios |
 | :--- | :--- |
 | **`Information`** | Major plugin lifecycle events (plugin startup/shutdown) and once-per-series activation notices. |
-| **`Warning`** | User-correctable configuration issues (missing TMDb ID, malformed group ID, unsupported provider prefix, non-existent TMDb group ID). Deduplicated per configuration state. |
-| **`Error`** | Unexpected runtime/API exceptions, network transport failures, or unrecoverable system errors. |
-| **`Debug`** | High-frequency operational tracing: per-episode provider invocation, coordinate mapping steps (`SxxExx` $\rightarrow$ canonical `SxxExx`), unmappable episode details, cache hits/misses. Enabled via category override `Jellyfin.Plugin.ShowOrganizer = Debug`. |
+| **`Warning`** | User-correctable configuration issues (missing TMDb ID, malformed group ID, unsupported provider prefix, non-existent TMDb group ID). Deduplicated per series configuration state. |
+| **`Error`** | Genuine unexpected runtime exceptions, network transport failures, or server errors. |
+| **`Debug`** | High-frequency operational tracing: per-episode provider invocation, TMDb group retrieval attempts/results, cache hits/misses, request coalescing, custom $\rightarrow$ canonical coordinate mapping, individual unmappable episodes, fallback decisions. Enabled via category override `"Jellyfin.Plugin.ShowOrganizer": "Debug"`. |
 
 ---
 
-## I. TMDb Configuration Initialization
+## K. Cancellation & Exception Handling
 
-TMDb's image API requires fetching TMDb client configuration (`client.GetConfigAsync()`) before formatting image URLs. `TmdbClientService` implements thread-safe async initialization (`EnsureClientConfigAsync`):
-
-* Avoids blocking single-threaded looper threads.
-* Implements lock-protected `TaskCompletionSource<bool>` so concurrent requests wait on a single in-flight configuration request.
-* If configuration retrieval fails due to a transient network error, the task reference resets so future requests can retry.
+* **Caller-Requested Cancellation**: Operations inspect `CancellationToken` (e.g. `cancellationToken.ThrowIfCancellationRequested()`). `OperationCanceledException` is caught with `when (cancellationToken.IsCancellationRequested)`, logged at `Debug` level, and rethrown (`throw;`). It is not logged as an `Error` or treated as a TMDb failure.
+* **TMDbLib Exception Contract**: `TMDbClient` is initialized with `ThrowApiExceptions = false`. TMDb API HTTP 404 (Not Found) responses return `null` cleanly without throwing exceptions, triggering the single-warning negative-cache path.
 
 ---
 
-## J. Multiple Cuts / Editions
+## L. Multiple Cuts / Editions
 
 Multiple custom cuts or fan-editions of a series (e.g. *Dragon Ball Recut*, *Dragon Ball Z Kai Saga Order*, etc.) can:
 * Share the same canonical TMDb Series ID (`Series.ProviderIds["Tmdb"]`).
 * Share canonical TMDb Episode IDs.
 * Use different TMDb Episode Group IDs in `Series.ProviderIds["ShowOrganizer"]`.
 
-ShowOrganizer preserves custom season/episode numbering per library item, allowing distinct custom structures to coexist cleanly in Jellyfin.
+ShowOrganizer preserves custom season/episode numbering per library item and uses filesystem folder path resolution in warning keys, allowing distinct custom structures to coexist cleanly in Jellyfin.
 
 ---
 
-## K. Artwork Limitation
+## M. Artwork Limitation
 
 TMDb Episode Group endpoints (`TvGroupCollection` and `TvGroup`) provide subgroup ordering and saga names, but do **not** supply dedicated subgroup/saga poster artwork in TMDb's API schema. ShowOrganizer does not fabricate poster artwork mappings; custom saga posters should be supplied via local files (`season01.jpg`) or complementary image providers.
 
 ---
 
-## L. NFO & Persistence
+## N. NFO & Persistence
 
 Jellyfin's native NFO saver serializes external IDs into XML based on `IExternalId.Key`:
 * Key `"ShowOrganizer"` $\rightarrow$ `<showorganizerid>` element in `tvshow.nfo`.
@@ -266,7 +270,7 @@ Jellyfin automatically parses `<showorganizerid>` into `Series.ProviderIds["Show
 
 ---
 
-## M. Jellyfin Version & API Assumptions
+## O. Jellyfin Version & API Assumptions
 
 * **Target ABI**: `10.11.0.0`
 * **Verified Runtime**: Jellyfin `10.11.11` (.NET 9.0)
@@ -278,11 +282,12 @@ Jellyfin automatically parses `<showorganizerid>` into `Series.ProviderIds["Show
 
 ---
 
-## N. Plugin Lifecycle & Service Registrations
+## P. Plugin Lifecycle & Service Registrations
 
-* **Service Registrations**: `PluginServiceRegistrator` registers `TmdbClientService` and `TmdbExactOrderResolver` as `AddTransient` in Jellyfin's `IServiceCollection`.
+* **Service Registrations**: `PluginServiceRegistrator` registers `ShowOrganizerEligibilityEvaluator`, `TmdbClientService`, and `TmdbExactOrderResolver` in Jellyfin's `IServiceCollection`.
 * **Service Disposal**: `TmdbClientService` implements `IDisposable` to dispose internal `TMDbClient` resources.
 * **Shutdown & Assembly Unload Safety**: `Plugin` implements `IDisposable` to handle explicit plugin unload cleanup:
   * Resets `Plugin.Instance = null`.
-  * Invokes `ShowOrganizerEpisodeProvider.ResetState()` to clear static deduplication dictionaries (`_activatedSeriesGroups` and `_loggedFailedMappings`).
-  * Invokes `TmdbClientService.ResetCredentialLogged()` to reset credential log flags across plugin updates.
+  * Invokes `ShowOrganizerEligibilityEvaluator.ResetState()` to clear static warning deduplication dictionaries.
+  * Invokes `ShowOrganizerEpisodeProvider.ResetState()` to clear activation dictionaries.
+  * Invokes `TmdbClientService.ResetState()` to clear negative group cache and in-flight request tracking.
