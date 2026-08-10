@@ -67,13 +67,11 @@ When configuring or updating ShowOrganizer on an existing series or library fold
 
 ### 4. How the Mapping Works
 
-ShowOrganizer treats your local Jellyfin season and episode numbers as positions inside the selected TMDb Episode Group.
+ShowOrganizer uses the season and episode numbering of your Jellyfin library to locate the corresponding episode in the selected TMDb Episode Group.
 
-For example, if your file is **Season 2, Episode 3** (`S02E03`):
-* ShowOrganizer looks up the 3rd episode of the 2nd group inside the selected TMDb Episode Group.
-* TMDb identifies which canonical episode that position represents (e.g. Season 1, Episode 19).
-* ShowOrganizer retrieves title, overview, air date, and cast metadata from that canonical TMDb episode and applies it to your item.
-* Your Jellyfin library item **remains `S02E03`**. ShowOrganizer does not rename your files or renumber your Jellyfin library items.
+It then resolves that entry to the canonical TMDb episode and retrieves its metadata, while preserving the season and episode numbering already used by your files and Jellyfin library.
+
+ShowOrganizer does not rename or renumber your files.
 
 > [!NOTE]
 > **Provider fallback:** ShowOrganizer follows Jellyfin's standard metadata-provider behavior. If it cannot provide metadata for an item — for example because no Show Group is configured or the episode cannot be mapped — it returns no metadata for that item and Jellyfin can continue with the following configured provider.
