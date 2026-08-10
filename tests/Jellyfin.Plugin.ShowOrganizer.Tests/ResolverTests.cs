@@ -5,6 +5,7 @@ using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ShowOrganizer.Configuration;
+using Jellyfin.Plugin.ShowOrganizer.ExternalIds;
 using Jellyfin.Plugin.ShowOrganizer.Models;
 using Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb;
 using Jellyfin.Plugin.ShowOrganizer.Services;
@@ -88,6 +89,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         private class MockTmdbClientService : TmdbClientService
         {
             public TvGroupCollection? MockGroupCollection { get; set; }
+            public TvEpisode? MockEpisode { get; set; }
             public bool GetTvEpisodeGroupsCalled { get; private set; }
             public bool GetTvEpisodeCalled { get; private set; }
 
@@ -105,6 +107,11 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 if (seasonNumber <= 0 || episodeNumber <= 0)
                 {
                     return Task.FromResult<TvEpisode?>(null);
+                }
+
+                if (MockEpisode != null)
+                {
+                    return Task.FromResult<TvEpisode?>(MockEpisode);
                 }
 
                 return Task.FromResult<TvEpisode?>(new TvEpisode
@@ -875,6 +882,158 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
                 .Where(m => m.Name.Contains("Dispose"))
                 .ToList();
             Assert.Empty(disposeMethods);
+        }
+
+        [Fact]
+        public void ExternalId_ProviderName_Is_TheMovieDb_Show_Group_And_Key_Is_ShowOrganizer()
+        {
+            var extId = new ShowOrganizerExternalId();
+            Assert.Equal("TheMovieDb Show Group", extId.ProviderName);
+            Assert.Equal("ShowOrganizer", extId.Key);
+            Assert.Equal(ExternalIdMediaType.Series, extId.Type);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_NeitherIdPresent_DeclinesCleanly()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache);
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+            Assert.Null(result.Item);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_TmdbIdPresent_ShowOrganizerIdAbsent_DeclinesCleanly()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache);
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+            Assert.Null(result.Item);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_ShowOrganizerIdPresent_TmdbIdAbsent_DeclinesCleanly()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache);
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds["ShowOrganizer"] = "tmdb:648fc7202f8d0900e3864f62";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+            Assert.Null(result.Item);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_BothIdsPresentAndValid_PerformsMapping()
+        {
+            var cache = new TestMemoryCache();
+            var groupCollection = new TvGroupCollection
+            {
+                Id = "648fc7202f8d0900e3864f62",
+                Name = "Saga Order",
+                Groups = new List<TvGroup>
+                {
+                    new TvGroup
+                    {
+                        Order = 1,
+                        Name = "Saiyan Saga",
+                        Episodes = new List<TvGroupEpisode>
+                        {
+                            new TvGroupEpisode { Order = 0, SeasonNumber = 1, EpisodeNumber = 1 }
+                        }
+                    }
+                }
+            };
+            var mockService = new MockTmdbClientService(cache)
+            {
+                MockGroupCollection = groupCollection,
+                MockEpisode = new TvEpisode { Name = "Saiyan Arrival", Overview = "Raditz arrives" }
+            };
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds["ShowOrganizer"] = "tmdb:648fc7202f8d0900e3864f62";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.True(result.HasMetadata);
+            Assert.NotNull(result.Item);
+            Assert.Equal("Saiyan Arrival", result.Item.Name);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_MalformedShowOrganizerId_DeclinesCleanly()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache);
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds["ShowOrganizer"] = "invalid_no_colon";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_UnsupportedPrefix_DeclinesCleanly()
+        {
+            var cache = new TestMemoryCache();
+            var mockService = new MockTmdbClientService(cache);
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 1, IndexNumber = 1, MetadataLanguage = "en" };
+            info.SeriesProviderIds["ShowOrganizer"] = "unsupported:12345";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
+        }
+
+        [Fact]
+        public async Task ProviderFallback_UnmappableCustomCoordinates_DeclinesCleanly()
+        {
+            var cache = new TestMemoryCache();
+            var groupCollection = new TvGroupCollection
+            {
+                Id = "648fc7202f8d0900e3864f62",
+                Name = "Saga Order",
+                Groups = new List<TvGroup>
+                {
+                    new TvGroup { Order = 1, Name = "Saiyan Saga", Episodes = new List<TvGroupEpisode>() }
+                }
+            };
+            var mockService = new MockTmdbClientService(cache) { MockGroupCollection = groupCollection };
+            var resolver = new TmdbExactOrderResolver(mockService);
+            var provider = new ShowOrganizerEpisodeProvider(mockService, resolver, null!, NullLogger<ShowOrganizerEpisodeProvider>.Instance);
+
+            var info = new EpisodeInfo { ParentIndexNumber = 99, IndexNumber = 99, MetadataLanguage = "en" };
+            info.SeriesProviderIds["ShowOrganizer"] = "tmdb:648fc7202f8d0900e3864f62";
+            info.SeriesProviderIds[MetadataProvider.Tmdb.ToString()] = "61709";
+
+            var result = await provider.GetMetadata(info, CancellationToken.None);
+            Assert.False(result.HasMetadata);
         }
     }
 }

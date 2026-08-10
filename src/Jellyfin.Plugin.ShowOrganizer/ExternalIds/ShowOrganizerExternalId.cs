@@ -7,7 +7,7 @@ namespace Jellyfin.Plugin.ShowOrganizer.ExternalIds
 {
     public class ShowOrganizerExternalId : IExternalId
     {
-        public string ProviderName => "ShowOrganizer";
+        public string ProviderName => "TheMovieDb Show Group";
 
         public string Key => "ShowOrganizer";
 
