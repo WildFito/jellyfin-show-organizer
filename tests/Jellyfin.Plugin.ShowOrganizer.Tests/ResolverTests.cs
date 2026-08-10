@@ -201,6 +201,18 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
         }
 
         [Fact]
+        public void ShowOrderReference_RawAndLegacyPrefix_ResolveToIdenticalTmdbGroupReference()
+        {
+            Assert.True(ShowOrderReference.TryParse("648fc7202f8d0900e3864f62", out var rawRef));
+            Assert.True(ShowOrderReference.TryParse("tmdb:648fc7202f8d0900e3864f62", out var legacyRef));
+
+            Assert.Equal(rawRef.Provider, legacyRef.Provider);
+            Assert.Equal(rawRef.OrderId, legacyRef.OrderId);
+            Assert.Equal("tmdb", rawRef.Provider);
+            Assert.Equal("648fc7202f8d0900e3864f62", rawRef.OrderId);
+        }
+
+        [Fact]
         public void ShowOrderReference_TryParse_ValidValues()
         {
             Assert.True(ShowOrderReference.TryParse("648fc7202f8d0900e3864f62", out var resultRaw));

@@ -4,101 +4,60 @@
 [![GitHub Release](https://img.shields.io/github/v/release/WildFito/jellyfin-show-organizer)](https://github.com/WildFito/jellyfin-show-organizer/releases)
 [![License](https://img.shields.io/github/license/WildFito/jellyfin-show-organizer)](LICENSE)
 
-ShowOrganizer is a metadata provider plugin for Jellyfin Server that lets a TV series use a specific The Movie Database (TMDb) Episode Group while preserving the custom season and episode numbering used by your local files, mapping those custom Jellyfin coordinates to canonical TMDb episodes for remote metadata retrieval.
-
-## What It Does
-
-ShowOrganizer allows users to map a TV Series in Jellyfin to a specific TMDB (The Movie Database) **Episode Group** (such as a Saga or Story Arc ordering) by entering a unique identifier. This permits custom season and episode ordering on a per-show basis.
-
-## Why It Exists (Current Jellyfin Limitations)
-
-Jellyfin's native TMDB integration selects episode groups using a generic type lookup (e.g., DVD, Absolute, Digital). It only resolves to the *first* group matching that type. 
-For shows like *Dragon Ball Z Kai*, TMDB contains multiple groups with the same type (e.g., *Absolute (Japan)* and *Absolute (International)*). In this case, Jellyfin only allows selecting the first match (*Absolute (Japan)*) and does not permit picking the international variant or specific custom saga orderings.
-
-ShowOrganizer addresses this limitation by letting users configure the exact TMDB Episode Group ID they want to map their series to.
-
-## Key Features
-
-* **Exact Episode Group Mapping**: Map any TV show to its exact TMDB Episode Group ID.
-* **Numbering Preservation**: Resolved original coordinates from TMDB are used strictly for remote data lookups. Jellyfin's custom season and episode indices (`IndexNumber`, `ParentIndexNumber`) remain unchanged in the library so physical file renames are not required.
-* **DI Registration**: Registers services dynamically into Jellyfin's DI framework.
-* **Shared Memory Cache**: Utilizes Jellyfin's built-in `IMemoryCache` to cache group definitions for 1 hour to ensure high scanning performance.
-* **Opt-In Fallback**: If the `ShowOrganizer` ID is missing on a Series, the plugin steps aside immediately and lets standard providers run.
+ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a specific [The Movie Database (TMDb)](https://www.themoviedb.org/) Episode Group — such as a saga, story-arc, or alternative episode ordering — while preserving the custom season and episode numbering used by the files in Jellyfin. ShowOrganizer maps each custom Jellyfin `SxxExx` episode to its canonical TMDb episode so Jellyfin can retrieve the correct metadata without renumbering the user's library.
 
 ## Supported Versions & Providers
 
 * **Supported Jellyfin Server Version**: 10.11.x (currently built and tested against **10.11.11**, targetAbi `10.11.0.0`)
-* **Supported Metadata Providers**: TMDB (The Movie Database)
+* **Supported Metadata Provider**: [The Movie Database (TMDb)](https://www.themoviedb.org/)
 
-## TMDB API Key Configuration
+## TMDb API Key Credentials
 
-Because the plugin does not include a custom settings UI, the TMDB API key must be configured in the plugin's configuration file:
+Out of the box, ShowOrganizer **automatically reuses Jellyfin's built-in TMDb API key**. No manual API key setup is required if Jellyfin's standard TMDb provider is active.
 
-1. Stop your Jellyfin server.
-2. Locate the ShowOrganizer configuration file under your Jellyfin configuration directory at:
-   `plugins/configurations/Jellyfin.Plugin.ShowOrganizer.xml`
-3. If it does not exist, create the file with the following contents, replacing `YOUR_TMDB_API_KEY` with your actual TMDB API key:
-   ```xml
-   <?xml version="1.0" encoding="utf-8"?>
-   <PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-     <TmdbApiKey>YOUR_TMDB_API_KEY</TmdbApiKey>
-   </PluginConfiguration>
-   ```
-4. Start your Jellyfin server.
+*(Optional Advanced Override)*: If you wish to provide a custom TMDb API key, you can optionally define it in `plugins/configurations/Jellyfin.Plugin.ShowOrganizer.xml`:
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <TmdbApiKey>YOUR_TMDB_API_KEY</TmdbApiKey>
+</PluginConfiguration>
+```
 
 ## How to Use ShowOrganizer
 
-### A. What ShowOrganizer Does
+### A. How to Find IDs on TMDb
 
-ShowOrganizer allows Jellyfin to organize TV shows using exact **TheMovieDb (TMDb) Episode Groups** (such as Sagas, Story Arcs, or Custom Broadcast Orders) while retaining the canonical episode metadata from TMDb.
+1. **TheMovieDb Programme Id**:
+   Open the series page on TMDb (e.g. `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai`).
+   Copy the numeric ID following `/tv/`:
+   `/tv/61709-dragon-ball-z-kai` -> `61709`
 
-* **TheMovieDb Programme Id**: Identifies the canonical TMDb TV series (e.g. `61709`).
-* **TheMovieDb Show Group Programme Id**: Identifies the exact TMDb Episode Group used for custom ordering (e.g. `648fc7202f8d0900e3864f62` or `tmdb:648fc7202f8d0900e3864f62`).
-* **Preserved Custom Numbering**: Your local Jellyfin season and episode numbers (SxxExx) remain unchanged. ShowOrganizer uses canonical TMDb coordinates behind the scenes to fetch metadata without renumbering your files.
-
----
-
-### B. Requirements
-
-Before configuring a show with ShowOrganizer, ensure you have:
-
-1. The canonical **TheMovieDb Programme Id** for the series.
-2. A valid **TheMovieDb Episode Group ID** for your target ordering.
-3. ShowOrganizer enabled and prioritized in Jellyfin Library Metadata Provider settings.
-4. Your media files and folders already numbered according to your chosen Episode Group structure.
+2. **TheMovieDb Show Group Programme Id**:
+   Open your desired Episode Group page (e.g. `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai/episode_group/648fc7202f8d0900e3864f62`).
+   Copy the hexadecimal hash following `/episode_group/`:
+   `/episode_group/648fc7202f8d0900e3864f62` -> `648fc7202f8d0900e3864f62`
 
 ---
 
-### C. How to Find IDs on TheMovieDb (TMDb)
-
-1. **Finding the TV Series ID**:
-   Navigate to the show on TMDb (e.g. `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai`).
-   The numeric portion immediately following `/tv/` is the TV Series ID (`61709`).
-
-2. **Finding the Episode Group ID**:
-   Navigate to the Episode Group page under the show (e.g. `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai/episode_group/648fc7202f8d0900e3864f62`).
-   The hexadecimal hash following `/episode_group/` is the Episode Group ID (`648fc7202f8d0900e3864f62`).
-
----
-
-### D. Dragon Ball Z Kai Worked Example
-
-Follow these steps to configure *Dragon Ball Z Kai* with its official **Saga Order (Story Arc)**:
+### B. Dragon Ball Z Kai Step-by-Step Example
 
 1. Open **Dragon Ball Z Kai** in your Jellyfin web interface.
 2. Click the three dots `...` and select **Edit Metadata**.
-3. In **TheMovieDb Programme Id**, verify or enter the canonical series ID:
+3. In **TheMovieDb Programme Id**, enter:
    `61709`
-4. In **TheMovieDb Show Group Programme Id** (or NFO `<showorganizerid>`), enter the TMDb Episode Group ID:
-   `648fc7202f8d0900e3864f62` *(Note: the `tmdb:` prefix is optional)*
+4. In **TheMovieDb Show Group Programme Id** (or NFO `<showorganizerid>`), enter:
+   `648fc7202f8d0900e3864f62`
+   *(Note: Legacy `tmdb:<group-id>` values remain fully supported for backward compatibility).*
 5. Click **Save**.
 6. Ensure **ShowOrganizer** is ordered above standard metadata providers in your library settings (**Dashboard -> Libraries -> TV Shows -> Manage Library -> Metadata Readers / Providers**).
 7. Refresh metadata for the series (**Refresh Metadata -> Replace all metadata**).
-8. **Result**: Jellyfin will organize seasons into Sagas (Season 1: *Saiyan Saga*, Season 2: *Namek Saga*, etc.) and pull accurate episode titles and descriptions while leaving your SxxExx file numbering untouched.
+
+> [!NOTE]
+> **Prerequisite**: Your local files and folders must already be organized and numbered according to the season/episode structure of your chosen TMDb Episode Group.
 
 ---
 
-### E. How Episode Group Mapping Works
+### C. How Mapping Works
 
 Suppose you have **Season 2, Episode 3** (`S02E03`) of *Dragon Ball Z Kai* in your local library:
 
@@ -114,7 +73,7 @@ Suppose you have **Season 2, Episode 3** (`S02E03`) of *Dragon Ball Z Kai* in yo
 
 ---
 
-### F. Fallback Behavior
+### D. Fallback Behavior
 
 ShowOrganizer is strictly **opt-in**. If:
 * Neither ID is present, or
@@ -125,7 +84,7 @@ ShowOrganizer gracefully declines to provide metadata (`HasMetadata = false`). J
 
 ---
 
-### G. Limitations
+### E. Limitations
 
 * **Season Artwork**: TMDb Episode Groups provide custom saga names and episode structures, but subgroup artwork is not supplied by TMDb Episode Groups. Saga season posters may need to be provided via local artwork or another image provider.
 * **Canonical IDs**: ShowOrganizer maps episode ordering; it does not alter canonical TMDb IDs.
