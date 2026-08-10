@@ -1,60 +1,238 @@
-# Architecture Overview
+# ShowOrganizer Technical Architecture & System Design
 
-ShowOrganizer is a metadata provider plugin for Jellyfin Server v10.11.11. This document details its architecture, integration with the Jellyfin metadata provider pipeline, and the coordinate resolution process.
+This document serves as the canonical technical reference for ShowOrganizer, a metadata provider plugin for Jellyfin Server v10.11.x (target ABI `10.11.0.0`, verified with Jellyfin `10.11.11`). It documents system design, indexing invariants, provider result semantics, credential priority, and concurrency controls.
 
-## Jellyfin Provider Pipeline
+---
 
-In Jellyfin, metadata lookup is driven by a chain of metadata providers. When Jellyfin refreshes a Series, Season, or Episode, it queries all registered providers in order of their priority (configured in Dashboard -> Libraries -> Metadata settings, or determined by the provider's `Order` property).
+## A. Purpose and Data Flow
 
-1. **Opt-in Interception**: ShowOrganizer providers (`ShowOrganizerEpisodeProvider`, `ShowOrganizerEpisodeImageProvider`, `ShowOrganizerSeasonProvider`) register at the top of the provider list (Episode/Image providers declare `Order => 0`, which runs before the native TMDB providers at `Order => 1`).
-2. **Opt-in Verification**: The providers check if the Series has the `ShowOrganizer` ID (`Series.ProviderIds["ShowOrganizer"]`). If not present, they immediately yield and return `HasMetadata = false` so that Jellyfin falls back to the subsequent native metadata providers.
-3. **Execution**: If the `ShowOrganizer` ID is present, the provider executes and retrieves metadata using the custom coordinate resolver.
+ShowOrganizer allows Jellyfin to organize TV series using custom [The Movie Database (TMDb)](https://www.themoviedb.org/) **Episode Groups** (e.g. Sagas, Story Arcs, or alternative broadcast orders) while fetching canonical metadata from TMDb.
 
-## Exact Episode-Order Resolution
-
-ShowOrganizer maps the user's custom numbering scheme to the official numbering scheme on TMDB using **TV Episode Groups**.
+### Coordinate Pipeline
 
 ```mermaid
 graph TD
-    A[Jellyfin custom SxxExx request] --> B{ShowOrganizer ID exists?}
-    B -- No --> C[Fallback to subsequent providers]
-    B -- Yes --> D[Fetch TvGroupCollection from TMDB]
-    D --> E[Resolve custom Season to group order]
-    E --> F[Resolve custom Episode to group episode order]
-    F --> G[Obtain original TMDB Season/Episode coordinates]
-    G --> H[Fetch actual metadata from TMDB using original coordinates]
-    H --> I[Return metadata to Jellyfin under custom SxxExx]
+    A[Jellyfin Custom SxxExx Request] --> B{ShowOrganizer ID Present?}
+    B -- No --> C[Yield HasMetadata = false -> Provider Fallback]
+    B -- Yes --> D[Fetch TvGroupCollection from TMDb API]
+    D --> E[Locate Subgroup where Order == Custom Season N]
+    E --> F[Locate Episode where Order == Custom Episode E - 1]
+    F --> G[Extract Canonical TMDb SeasonNumber & EpisodeNumber]
+    G --> H[Fetch Metadata & Stills from TMDb API using Canonical Coordinates]
+    H --> I[Assign Metadata to Item preserving Custom ParentIndexNumber & IndexNumber]
+    I --> J[Return MetadataResult with HasMetadata = true to Jellyfin]
 ```
 
-## TMDB Credentials & Fallback Hierarchy
+### Coordinate Distinction
 
-`TmdbClientService` automatically resolves TMDb credentials without requiring manual user setup:
+1. **Custom / Display Coordinates**: The local season and episode numbers assigned to files by the user in Jellyfin (`ParentIndexNumber`, `IndexNumber`). These remain untouched in the library.
+2. **Episode Group Coordinates**: The structural subgroup and episode positions defined inside a TMDb `TvGroupCollection` payload.
+3. **Canonical TMDb Coordinates**: The actual `SeasonNumber` and `EpisodeNumber` of the canonical TMDb episode, used strictly for remote TMDb API metadata requests.
 
-1. **Explicit Override**: Checks if `PluginConfiguration.TmdbApiKey` is explicitly configured in ShowOrganizer.
-2. **Jellyfin TMDb Reuse**: If empty, checks Jellyfin's `IPluginManager` for the built-in TMDb plugin configuration and reuses Jellyfin's TMDb API key.
-3. **Warning**: If neither source contains an API key, logs a warning (`No usable TMDb API credentials are available`).
+---
 
-*Note: API keys are never logged.*
+## B. External IDs
 
-## Diagnostics & Logging
+ShowOrganizer registers a custom external identifier with Jellyfin via `IExternalId`:
 
-ShowOrganizer provides structured diagnostic logging:
-* **Activation**: Logs `INFO` when activated for a series.
-* **Retrieval**: Logs `INFO` once upon retrieving an episode group from TMDb API.
-* **Cache Hits**: Logged at `DEBUG` level.
-* **Per-Episode Mapping**: Logged at `DEBUG` level (e.g. `Mapped custom S02E03 -> TMDb S01E18 using group 6968...`).
-* **Failures**: Logs `WARN` with series ID, group ID, and status error without leaking API keys.
+* **Visible Provider Display Name**: `ProviderName = "TheMovieDb Show Group"`
+  Used by Jellyfin's web client and API endpoints to format the user-facing UI label (e.g., *TheMovieDb Show Group Programme Id* or *TheMovieDb Show Group Series Id*).
+* **Stable Internal Key**: `Key = "ShowOrganizer"`
+  Used as the immutable dictionary key in `Series.ProviderIds["ShowOrganizer"]` and as the NFO XML tag name (`<showorganizerid>`).
 
-## Season Artwork Note
+> [!IMPORTANT]
+> `ProviderName` and `Key` are intentionally decoupled. `ProviderName` may be updated to reflect UI changes without modifying `Key`. `Key` **must remain stable as `"ShowOrganizer"`** to prevent breaking existing database records and NFO files.
 
-TMDb Episode Group endpoints (`TvGroupCollection` and `TvGroup`) contain subgroup ordering and custom titles (such as saga names), but do **not** expose subgroup/saga poster artwork in TMDb's API schema. Therefore, ShowOrganizer does not fabricate artwork mappings to canonical TMDb season posters. Custom saga/episode-group artwork should be provided via local image files or local NFO metadata.
+Canonical TMDb series IDs remain stored under Jellyfin's standard key: `Series.ProviderIds["Tmdb"]`.
 
-## Preservation of Custom Numbering
+---
 
-To ensure physical media files do not need renaming:
-- ShowOrganizer queries TMDB using the resolved original season/episode numbering coordinates.
-- However, the returned metadata properties on the `Episode` item are explicitly assigned to match the original user coordinates:
-  - `ParentIndexNumber = info.ParentIndexNumber`
-  - `IndexNumber = info.IndexNumber`
-  - `IndexNumberEnd = info.IndexNumberEnd`
-- As a result, Jellyfin stores the correct episode descriptions, cast, and stills under the user's local custom layout.
+## C. Show Group Reference Formats
+
+ShowOrganizer handles two input formats in `ShowOrderReference.TryParse`:
+
+1. **Preferred / Raw Format**: `648fc7202f8d0900e3864f62`
+   An un-prefixed hexadecimal Episode Group ID. Implicitly resolves to provider `tmdb`.
+2. **Legacy / Qualified Format**: `tmdb:648fc7202f8d0900e3864f62`
+   A prefix-qualified string. Resolved by splitting on the colon prefix (`provider:orderId`).
+
+### Parsing & Validation Logic (`ShowOrderReference.cs`)
+
+```csharp
+public static bool TryParse(string? value, [NotNullWhen(true)] out ShowOrderReference? result)
+{
+    result = null;
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return false;
+    }
+
+    var cleanValue = value.Trim();
+
+    if (cleanValue.Contains(':', StringComparison.Ordinal))
+    {
+        var parts = cleanValue.Split(':', 2);
+        var provider = parts[0].Trim().ToLowerInvariant();
+        var orderId = parts[1].Trim();
+
+        if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(orderId))
+        {
+            return false;
+        }
+
+        result = new ShowOrderReference(provider, orderId);
+        return true;
+    }
+
+    result = new ShowOrderReference("tmdb", cleanValue);
+    return true;
+}
+```
+
+---
+
+## D. EXACT MAPPING INVARIANTS
+
+> [!CAUTION]
+> **CRITICAL REGRESSION WARNING**: Do NOT "normalize" both season and episode indexes to 0-based or 1-based. TMDb Episode Group subgroup orders and episode orders use different indexing bases by design.
+
+The exact mapping invariants verified against real TMDb Episode Group payloads are:
+
+$$\text{Custom Season } N \longrightarrow \text{TMDb Subgroup where } \texttt{Order} == N \quad \text{(1-based)}$$
+
+$$\text{Custom Episode } E \longrightarrow \text{Subgroup Episode where } \texttt{Order} == E - 1 \quad \text{(0-based)}$$
+
+### Code Implementations
+
+* **Season Mapping (`ShowOrganizerSeasonProvider.cs`)**:
+  ```csharp
+  var matchingGroup = groupCollection.Groups.Find(g => g.Order == customSeasonNumber.Value);
+  ```
+* **Episode Mapping (`TmdbExactOrderResolver.cs`)**:
+  ```csharp
+  var season = groupCollection.Groups.Find(s => s.Order == customSeasonNumber);
+  var episode = season.Episodes.Find(e => e.Order == customEpisodeNumber - 1);
+  ```
+
+---
+
+## E. Canonical Episode Resolution
+
+Once an episode is located in the TMDb Episode Group payload, its canonical TMDb coordinates (`episode.SeasonNumber`, `episode.EpisodeNumber`) are passed to `client.GetTvEpisodeAsync(...)`.
+
+When returning the constructed `Episode` object to Jellyfin, the original custom coordinates from `EpisodeInfo` are strictly preserved:
+
+```csharp
+var item = new Episode
+{
+    IndexNumber = info.IndexNumber,
+    ParentIndexNumber = info.ParentIndexNumber,
+    IndexNumberEnd = info.IndexNumberEnd,
+    Name = episodeResult.Name,
+    Overview = episodeResult.Overview,
+    PremiereDate = episodeResult.AirDate,
+    ProductionYear = episodeResult.AirDate?.Year,
+    CommunityRating = Convert.ToSingle(episodeResult.VoteAverage)
+};
+```
+
+---
+
+## F. Provider Result / Fallback Semantics
+
+ShowOrganizer providers implement standard Jellyfin provider contracts (`IRemoteMetadataProvider<Season, SeasonInfo>`, `IRemoteMetadataProvider<Episode, EpisodeInfo>`, and `IRemoteImageProvider`).
+
+When metadata cannot be resolved, ShowOrganizer returns `HasMetadata = false` (`Item = null`) or `Enumerable.Empty<RemoteImageInfo>()`, allowing Jellyfin's `ProviderManager` to fall back to the next configured metadata provider:
+
+| Scenario | Behavior / Return Value | Logging Level |
+| :--- | :--- | :--- |
+| **No ShowOrganizer ID on Series** | `HasMetadata = false`, `Item = null` | Silent |
+| **No TMDb Series ID on Series** | `HasMetadata = false`, `Item = null` | Silent |
+| **Neither ID Present** | `HasMetadata = false`, `Item = null` | Silent |
+| **Malformed Show Group ID** | `HasMetadata = false`, `Item = null` | `WARN` |
+| **Unsupported Provider Prefix** | `HasMetadata = false`, `Item = null` | `WARN` |
+| **Group / Subgroup Not Found** | `HasMetadata = false`, `Item = null` | `WARN` (deduplicated) |
+| **Unmappable Custom Coordinate** | `HasMetadata = false`, `Item = null` | `WARN` (deduplicated) |
+| **TMDb API Network / HTTP Error** | `HasMetadata = false`, `Item = null` | `WARN` |
+| **Valid Mapping** | `HasMetadata = true`, `Item = Episode/Season` | `INFO` (activated once per show) |
+
+---
+
+## G. TMDb Credential Resolution
+
+`TmdbClientService.ResolveTmdbApiKey()` resolves TMDb API credentials according to the following strict priority:
+
+1. **Explicit Plugin Override**: Checks `Plugin.Instance?.Configuration?.TmdbApiKey`.
+2. **Jellyfin TMDb Plugin Configuration**: Inspects Jellyfin's `IPluginManager.Plugins` for active TMDb plugin configuration (`TmdbApiKey` property).
+3. **Jellyfin Assembly Fallback**: Inspects loaded assemblies via reflection for `MediaBrowser.Providers.Plugins.Tmdb.TmdbUtils.ApiKey`.
+
+```mermaid
+graph TD
+    A[ResolveTmdbApiKey] --> B{ShowOrganizer Config TmdbApiKey Set?}
+    B -- Yes --> C[Use ShowOrganizer Key]
+    B -- No --> D{Jellyfin TMDb Plugin Key Found?}
+    D -- Yes --> E[Use Jellyfin TMDb Key]
+    D -- No --> F{TmdbUtils.ApiKey Assembly Reflection Found?}
+    F -- Yes --> G[Use TmdbUtils Key]
+    F -- No --> H[Log Warning & Return null]
+```
+
+---
+
+## H. TMDb Configuration Initialization
+
+TMDb's image API requires fetching TMDb client configuration (`client.GetConfigAsync()`) before formatting image URLs. `TmdbClientService` implements thread-safe async initialization (`EnsureClientConfigAsync`):
+
+* Avoids blocking single-threaded looper threads.
+* Implements lock-protected `TaskCompletionSource<bool>` so concurrent requests wait on a single in-flight configuration request.
+* If configuration retrieval fails due to a transient network error, the task reference resets so future requests can retry.
+
+---
+
+## I. Multiple Cuts / Editions
+
+Multiple custom cuts or fan-editions of a series (e.g. *Dragon Ball Recut*, *Dragon Ball Z Kai Saga Order*, etc.) can:
+* Share the same canonical TMDb Series ID (`Series.ProviderIds["Tmdb"]`).
+* Share canonical TMDb Episode IDs.
+* Use different TMDb Episode Group IDs in `Series.ProviderIds["ShowOrganizer"]`.
+
+ShowOrganizer preserves custom season/episode numbering per library item, allowing distinct custom structures to coexist cleanly in Jellyfin.
+
+---
+
+## J. Artwork Limitation
+
+TMDb Episode Group endpoints (`TvGroupCollection` and `TvGroup`) provide subgroup ordering and saga names, but do **not** supply dedicated subgroup/saga poster artwork in TMDb's API schema. ShowOrganizer does not fabricate poster artwork mappings; custom saga posters should be supplied via local files (`season01.jpg`) or complementary image providers.
+
+---
+
+## K. NFO & Persistence
+
+Jellyfin's native NFO saver serializes external IDs into XML based on `IExternalId.Key`:
+* Key `"ShowOrganizer"` $\rightarrow$ `<showorganizerid>` element in `tvshow.nfo`.
+* Preferred payload: raw Episode Group ID (e.g. `<showorganizerid>648fc7202f8d0900e3864f62</showorganizerid>`).
+* Legacy payload: `<showorganizerid>tmdb:648fc7202f8d0900e3864f62</showorganizerid>`.
+
+Jellyfin automatically parses `<showorganizerid>` into `Series.ProviderIds["ShowOrganizer"]` during library scans.
+
+---
+
+## L. Jellyfin Version & API Assumptions
+
+* **Target ABI**: `10.11.0.0`
+* **Verified Runtime**: Jellyfin `10.11.11` (.NET 9.0)
+* **Core Interfaces Utilized**:
+  * `MediaBrowser.Controller.Providers.IExternalId`
+  * `MediaBrowser.Controller.Providers.IRemoteMetadataProvider<TItemType, TLookupInfo>`
+  * `MediaBrowser.Controller.Providers.IRemoteImageProvider`
+  * `MediaBrowser.Controller.Plugins.IPluginServiceRegistrator`
+
+---
+
+## M. Plugin Lifecycle & Memory Safety
+
+* **Service Lifetimes**: Services registered via `PluginServiceRegistrator` (`TmdbClientService`, `TmdbExactOrderResolver`) are registered as `AddTransient` to ensure proper disposal when scope ends.
+* **Shutdown Cleanup**: `Plugin.Dispose()` implements explicit state cleanup:
+  * Clears `Plugin.Instance = null`.
+  * Calls `ShowOrganizerEpisodeProvider.ResetState()` to clear static deduplication dictionaries.
+  * Calls `TmdbClientService.ResetCredentialLogged()` to ensure diagnostic logs reset across plugin reloads.

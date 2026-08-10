@@ -4,97 +4,85 @@
 [![GitHub Release](https://img.shields.io/github/v/release/WildFito/jellyfin-show-organizer)](https://github.com/WildFito/jellyfin-show-organizer/releases)
 [![License](https://img.shields.io/github/license/WildFito/jellyfin-show-organizer)](LICENSE)
 
-ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a specific [The Movie Database (TMDb)](https://www.themoviedb.org/) Episode Group — such as a saga, story-arc, or alternative episode ordering — while preserving the custom season and episode numbering used by the files in Jellyfin. ShowOrganizer maps each custom Jellyfin `SxxExx` episode to its canonical TMDb episode so Jellyfin can retrieve the correct metadata without renumbering the user's library.
+ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a specific [The Movie Database (TMDb)](https://www.themoviedb.org/) Episode Group — such as a saga, story arc, or alternative episode ordering — while preserving the custom season and episode numbering used by the files in Jellyfin. ShowOrganizer maps each custom Jellyfin `SxxExx` episode to its canonical TMDb episode so Jellyfin can retrieve the correct metadata without renumbering the user's library.
 
-## Supported Versions & Providers
+## Compatibility & Requirements
 
 * **Supported Jellyfin Server Version**: 10.11.x (currently built and tested against **10.11.11**, targetAbi `10.11.0.0`)
 * **Supported Metadata Provider**: [The Movie Database (TMDb)](https://www.themoviedb.org/)
 
-## TMDb API Key Credentials
+## Installation
 
-Out of the box, ShowOrganizer **automatically reuses Jellyfin's built-in TMDb API key**. No manual API key setup is required if Jellyfin's standard TMDb provider is active.
+### Repository Installation (Recommended)
 
-*(Optional Advanced Override)*: If you wish to provide a custom TMDb API key, you can optionally define it in `plugins/configurations/Jellyfin.Plugin.ShowOrganizer.xml`:
-```xml
-<?xml version="1.0" encoding="utf-8"?>
-<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
-  <TmdbApiKey>YOUR_TMDB_API_KEY</TmdbApiKey>
-</PluginConfiguration>
-```
+1. In your Jellyfin administrator panel, go to **Dashboard -> Plugins -> Repositories**.
+2. Click **Add** and enter:
+   * **Repository Name**: `ShowOrganizer`
+   * **Repository URL**: `https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/manifest.json`
+3. Save, navigate to the **Catalog** tab, select **ShowOrganizer**, and click **Install**.
+4. Restart your Jellyfin server.
 
-## How to Use ShowOrganizer
+### Manual Installation
 
-### A. How to Find IDs on TMDb
+1. Download or compile `Jellyfin.Plugin.ShowOrganizer.dll`.
+2. Create a folder named `ShowOrganizer` in your Jellyfin plugins directory (`plugins/ShowOrganizer`).
+3. Copy `Jellyfin.Plugin.ShowOrganizer.dll` into the directory and restart Jellyfin.
 
-1. **TheMovieDb Programme Id**:
-   Open the series page on TMDb (e.g. `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai`).
-   Copy the numeric ID following `/tv/`:
-   `/tv/61709-dragon-ball-z-kai` -> `61709`
+## How to Use
 
-2. **TheMovieDb Show Group Programme Id**:
-   Open your desired Episode Group page (e.g. `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai/episode_group/648fc7202f8d0900e3864f62`).
-   Copy the hexadecimal hash following `/episode_group/`:
-   `/episode_group/648fc7202f8d0900e3864f62` -> `648fc7202f8d0900e3864f62`
+### 1. Find the IDs on TMDb
 
----
+To configure a show, you need two IDs from [The Movie Database (TMDb)](https://www.themoviedb.org/):
 
-### B. Dragon Ball Z Kai Step-by-Step Example
+* **TheMovieDb Programme Id**:
+  Open the series page on TMDb (e.g., `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai`).
+  Copy the numeric ID following `/tv/`:
+  `/tv/61709-dragon-ball-z-kai` $\rightarrow$ `61709`
 
-1. Open **Dragon Ball Z Kai** in your Jellyfin web interface.
+* **TheMovieDb Show Group Programme Id**:
+  Open your desired Episode Group page (e.g., `https://www.themoviedb.org/tv/61709-dragon-ball-z-kai/episode_group/648fc7202f8d0900e3864f62`).
+  Copy the Episode Group ID following `/episode_group/`:
+  `/episode_group/648fc7202f8d0900e3864f62` $\rightarrow$ `648fc7202f8d0900e3864f62`
+
+### 2. Configure the Series in Jellyfin
+
+1. Open the TV series in your Jellyfin web interface.
 2. Click the three dots `...` and select **Edit Metadata**.
-3. In **TheMovieDb Programme Id**, enter:
+3. Set **TheMovieDb Programme Id**:
    `61709`
-4. In **TheMovieDb Show Group Programme Id** (or NFO `<showorganizerid>`), enter:
+4. Set **TheMovieDb Show Group Programme Id**:
    `648fc7202f8d0900e3864f62`
-   *(Note: Legacy `tmdb:<group-id>` values remain fully supported for backward compatibility).*
 5. Click **Save**.
-6. Ensure **ShowOrganizer** is ordered above standard metadata providers in your library settings (**Dashboard -> Libraries -> TV Shows -> Manage Library -> Metadata Readers / Providers**).
-7. Refresh metadata for the series (**Refresh Metadata -> Replace all metadata**).
 
 > [!NOTE]
-> **Prerequisite**: Your local files and folders must already be organized and numbered according to the season/episode structure of your chosen TMDb Episode Group.
+> Depending on your Jellyfin language/locale setting, *Programme Id* may appear as *Series Id*.
+> Legacy `tmdb:<episode-group-id>` values remain supported for backward compatibility.
 
----
+### 3. Refresh Existing Metadata
 
-### C. How Mapping Works
+When configuring or updating ShowOrganizer on an existing series or library folder:
 
-Suppose you have **Season 2, Episode 3** (`S02E03`) of *Dragon Ball Z Kai* in your local library:
+1. Ensure the relevant series or episode metadata fields are not locked in Jellyfin (locked metadata fields prevent Jellyfin from replacing existing metadata).
+2. Click `...` on the series, select **Refresh Metadata**, and choose **Replace all metadata**.
 
-* **Custom Jellyfin Coordinate**: `S02E03`
-* **TMDb Episode Group Lookup**:
-  * **Group Order**: Custom Season 2 maps to Episode Group **Order 2** (*Namek Saga*).
-  * **Episode Order**: Custom Episode 3 maps to Episode **Order 2** (0-based: `3 - 1 = 2`).
-* **Canonical TMDb Episode Resolved**: Season 1, Episode 19 (*"Run, Gohan! Long-Awaited Namek!"*).
-* **Metadata Applied**: Title, Overview, Air Date, Cast & Crew from S01E19 are applied to your item, while Jellyfin displays it as `S02E03` in your library.
+### 4. How the Mapping Works
 
-> [!NOTE]
-> **Indexing Rules**: TMDb Episode Group subgroup `Order` is 1-based (`Season N` -> `Group Order N`). Episode `Order` inside a subgroup is 0-based (`Episode E` -> `Group Episode Order E - 1`).
+ShowOrganizer treats your local Jellyfin season and episode numbers as positions inside the selected TMDb Episode Group.
 
----
+For example, if your file is **Season 2, Episode 3** (`S02E03`):
+* ShowOrganizer looks up the 3rd episode of the 2nd group inside the selected TMDb Episode Group.
+* TMDb identifies which canonical episode that position represents (e.g. Season 1, Episode 19).
+* ShowOrganizer retrieves title, overview, air date, and cast metadata from that canonical TMDb episode and applies it to your item.
+* Your Jellyfin library item **remains `S02E03`**. ShowOrganizer does not rename your files or renumber your Jellyfin library items.
 
-### D. Fallback Behavior
+## Limitations
 
-ShowOrganizer is strictly **opt-in**. If:
-* Neither ID is present, or
-* Either ID is missing, malformed, or unresolvable, or
-* An episode coordinate cannot be mapped inside the configured Episode Group,
+* **Season / Saga Artwork**: TMDb Episode Groups define episode orderings and saga subgroup names, but TMDb's Episode Group API does not provide custom subgroup poster artwork. Saga season posters may require local image files (`season01.jpg`, `season02.jpg`) or another image provider.
+* **Provider Fallback**: ShowOrganizer follows Jellyfin's standard metadata provider behavior. If ShowOrganizer cannot provide metadata for an item — for example because no Show Group is configured or an episode cannot be mapped — it returns no result for that item, allowing Jellyfin to continue with the next configured provider.
 
-ShowOrganizer gracefully declines to provide metadata (`HasMetadata = false`). Jellyfin's `ProviderManager` then automatically falls back to the next configured metadata provider (e.g. standard TMDb or TVDB).
+## Optional: NFO Configuration
 
----
-
-### E. Limitations
-
-* **Season Artwork**: TMDb Episode Groups provide custom saga names and episode structures, but subgroup artwork is not supplied by TMDb Episode Groups. Saga season posters may need to be provided via local artwork or another image provider.
-* **Canonical IDs**: ShowOrganizer maps episode ordering; it does not alter canonical TMDb IDs.
-* **Multiple Cuts**: Multiple custom cuts or fan-editions can reference the same canonical TMDb series/episode IDs while using different custom ordering groups.
-
----
-
-## NFO Configuration Example
-
-To enable ShowOrganizer for a series, write the group ID in the series level NFO file (`tvshow.nfo`) under the `<showorganizerid>` XML element:
+If you manage library metadata using local NFO files (`tvshow.nfo`), add the `<showorganizerid>` element to `<tvshow>`:
 
 ```xml
 <tvshow>
@@ -104,37 +92,33 @@ To enable ShowOrganizer for a series, write the group ID in the series level NFO
 </tvshow>
 ```
 
-Alternatively, configure the value in the Jellyfin web interface under **Edit Metadata -> External IDs -> TheMovieDb Show Group** with: `648fc7202f8d0900e3864f62` (or `tmdb:648fc7202f8d0900e3864f62`).
+> [!NOTE]
+> Legacy NFO values formatted as `<showorganizerid>tmdb:648fc7202f8d0900e3864f62</showorganizerid>` remain fully readable.
 
-## Repository Installation
+## Advanced: Custom TMDb API Key
 
-To add the ShowOrganizer plugin catalog repository to your Jellyfin server:
+ShowOrganizer **automatically reuses Jellyfin's built-in TMDb credentials**, so no separate TMDb API key is normally required.
 
-1. Go to **Dashboard -> Plugins** in your Jellyfin administrator panel.
-2. Select the **Repositories** tab (or click **Manage Repositories**).
-3. Click **Add** to add a new repository catalog.
-4. Set the following values:
-   * **Repository Name**: `ShowOrganizer`
-   * **Repository URL**: `https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/manifest.json`
-5. Save, then select the **Catalog** tab.
-6. Find and click on **ShowOrganizer**, then click **Install**.
-7. Restart your Jellyfin server.
+If you wish to provide a custom TMDb API key as an advanced override, create `plugins/configurations/Jellyfin.Plugin.ShowOrganizer.xml` under your Jellyfin configuration directory:
 
-## Manual Installation
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <TmdbApiKey>YOUR_TMDB_API_KEY</TmdbApiKey>
+</PluginConfiguration>
+```
 
-1. Build the project in Release mode.
-2. Locate the compiled plugin DLL file `Jellyfin.Plugin.ShowOrganizer.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net9.0/`.
-3. Create a folder named `ShowOrganizer` inside your Jellyfin server's `plugins/` directory:
-   ```bash
-   mkdir -p /path/to/jellyfin/config/plugins/ShowOrganizer
-   ```
-4. Copy `Jellyfin.Plugin.ShowOrganizer.dll` into the directory and restart your Jellyfin server.
+## Technical Documentation & Development
 
-## Build & Test Instructions
+For developer details, coordinate mapping invariants, provider return semantics, and architecture, see:
+* [Architecture Overview](docs/architecture.md)
+* [NFO Format Specification](docs/nfo-format.md)
+* [Development Guide](docs/development.md)
+* [Release and Packaging Guide](docs/releasing.md)
+
+## Development
 
 ### Building the Plugin
-
-To compile the plugin in Release mode:
 
 ```bash
 dotnet restore
@@ -143,16 +127,7 @@ dotnet build --configuration Release
 
 ### Running Tests
 
-To run the unit and integration test suite:
-
 ```bash
 dotnet test
 ```
-*(If your host SDK is higher than Net 9, configure roll-forward: `$env:DOTNET_ROLL_FORWARD="Major"; dotnet test`)*
-
-## Documentation Links
-
-* [Architecture Overview](docs/architecture.md)
-* [NFO Format Details](docs/nfo-format.md)
-* [Development Setup](docs/development.md)
-* [Release and Packaging Guide](docs/releasing.md)
+*(If your host SDK is higher than .NET 9, configure roll-forward: `$env:DOTNET_ROLL_FORWARD="Major"; dotnet test`)*
