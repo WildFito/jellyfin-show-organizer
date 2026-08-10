@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",
         "versions": [
             {
+                "version": "1.0.0.0",
+                "changelog": "First stable production release (1.0.0.0): full TMDb Episode Group metadata resolution, preservation of custom Jellyfin SxxExx numbering, raw Episode Group ID support, deduplicated warning logging, Episode Group caching, and request coalescing.",
+                "targetAbi": "10.11.0.0",
+                "sourceUrl": "https://github.com/WildFito/jellyfin-show-organizer/releases/download/v1.0.0.0/showorganizer_1.0.0.0.zip",
+                "checksum": "269b0ea4d32dca469b8b6ac60d3ac406",
+                "timestamp": "2026-08-10T22:06:08Z"
+            },
+            {
                 "version": "0.2.0.0",
                 "changelog": "Update plugin manifest and overview descriptions to reflect TMDb Episode Group ordering and custom coordinate mapping, and bump version to 0.2.0.0.",
                 "targetAbi": "10.11.0.0",
