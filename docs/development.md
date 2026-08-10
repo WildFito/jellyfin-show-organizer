@@ -34,12 +34,12 @@ The test suite covers:
 To install the plugin manually into a Jellyfin server running in a Docker container (such as on UNRAID):
 
 1. Compile the plugin in Release mode.
-2. Locate the output assembly file `Jellyfin.Plugin.ShowOrganizer.dll` and `TMDbLib.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net9.0/`.
+2. Locate the output assembly file `Jellyfin.Plugin.ShowOrganizer.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net9.0/`.
 3. Create a folder named `ShowOrganizer` inside your Jellyfin server's `plugins/` directory:
    ```bash
    mkdir -p /path/to/jellyfin/config/plugins/ShowOrganizer
    ```
-4. Copy the compiled DLLs to that folder.
+4. Copy `Jellyfin.Plugin.ShowOrganizer.dll` into that folder. *(Note: Jellyfin Server bundles TMDbLib at runtime; only `Jellyfin.Plugin.ShowOrganizer.dll` is required).*
 5. Restart your Jellyfin container to load the plugin.
 
 ## Logging and Troubleshooting

@@ -52,9 +52,11 @@ Canonical TMDb series IDs remain stored under Jellyfin's standard key: `Series.P
 ShowOrganizer handles two input formats in `ShowOrderReference.TryParse`:
 
 1. **Preferred / Raw Format**: `648fc7202f8d0900e3864f62`
-   An un-prefixed hexadecimal Episode Group ID. Implicitly resolves to provider `tmdb`.
+   An un-prefixed TMDb Episode Group ID. Implicitly resolves to provider `tmdb`.
 2. **Legacy / Qualified Format**: `tmdb:648fc7202f8d0900e3864f62`
    A prefix-qualified string. Resolved by splitting on the colon prefix (`provider:orderId`).
+
+Parsing in `ShowOrderReference.TryParse` determines reference structure. The parser does not enforce a specific string format or character set on group IDs; validity and existence of the Episode Group are determined later during TMDb API lookup.
 
 ### Parsing & Validation Logic (`ShowOrderReference.cs`)
 
@@ -179,7 +181,19 @@ graph TD
 
 ---
 
-## H. TMDb Configuration Initialization
+## H. Episode Group Caching
+
+To optimize scan performance and avoid hitting TMDb rate limits during large library scans, `TmdbClientService` caches retrieved TMDb Episode Group payloads (`TvGroupCollection`):
+
+* **Cache Layer**: Uses Jellyfin's shared `IMemoryCache`.
+* **Cache Key Format**: `$"group-{tvShowId}-{groupId}-{normalizedLanguage}"`
+* **Cache Duration**: 1 hour (`TimeSpan.FromHours(1)`).
+* **Caching Condition**: Group payloads are cached only when TMDb returns a valid collection containing non-null groups (`collection != null && collection.Groups != null`).
+* **Unsuccessful Lookups**: Null, missing, or failed API group lookups are **not cached**, allowing future metadata refresh attempts to retry instantly.
+
+---
+
+## I. TMDb Configuration Initialization
 
 TMDb's image API requires fetching TMDb client configuration (`client.GetConfigAsync()`) before formatting image URLs. `TmdbClientService` implements thread-safe async initialization (`EnsureClientConfigAsync`):
 
@@ -189,7 +203,7 @@ TMDb's image API requires fetching TMDb client configuration (`client.GetConfigA
 
 ---
 
-## I. Multiple Cuts / Editions
+## J. Multiple Cuts / Editions
 
 Multiple custom cuts or fan-editions of a series (e.g. *Dragon Ball Recut*, *Dragon Ball Z Kai Saga Order*, etc.) can:
 * Share the same canonical TMDb Series ID (`Series.ProviderIds["Tmdb"]`).
@@ -200,13 +214,13 @@ ShowOrganizer preserves custom season/episode numbering per library item, allowi
 
 ---
 
-## J. Artwork Limitation
+## K. Artwork Limitation
 
 TMDb Episode Group endpoints (`TvGroupCollection` and `TvGroup`) provide subgroup ordering and saga names, but do **not** supply dedicated subgroup/saga poster artwork in TMDb's API schema. ShowOrganizer does not fabricate poster artwork mappings; custom saga posters should be supplied via local files (`season01.jpg`) or complementary image providers.
 
 ---
 
-## K. NFO & Persistence
+## L. NFO & Persistence
 
 Jellyfin's native NFO saver serializes external IDs into XML based on `IExternalId.Key`:
 * Key `"ShowOrganizer"` $\rightarrow$ `<showorganizerid>` element in `tvshow.nfo`.
@@ -217,7 +231,7 @@ Jellyfin automatically parses `<showorganizerid>` into `Series.ProviderIds["Show
 
 ---
 
-## L. Jellyfin Version & API Assumptions
+## M. Jellyfin Version & API Assumptions
 
 * **Target ABI**: `10.11.0.0`
 * **Verified Runtime**: Jellyfin `10.11.11` (.NET 9.0)
@@ -229,10 +243,11 @@ Jellyfin automatically parses `<showorganizerid>` into `Series.ProviderIds["Show
 
 ---
 
-## M. Plugin Lifecycle & Memory Safety
+## N. Plugin Lifecycle & Service Registrations
 
-* **Service Lifetimes**: Services registered via `PluginServiceRegistrator` (`TmdbClientService`, `TmdbExactOrderResolver`) are registered as `AddTransient` to ensure proper disposal when scope ends.
-* **Shutdown Cleanup**: `Plugin.Dispose()` implements explicit state cleanup:
-  * Clears `Plugin.Instance = null`.
-  * Calls `ShowOrganizerEpisodeProvider.ResetState()` to clear static deduplication dictionaries.
-  * Calls `TmdbClientService.ResetCredentialLogged()` to ensure diagnostic logs reset across plugin reloads.
+* **Service Registrations**: `PluginServiceRegistrator` registers `TmdbClientService` and `TmdbExactOrderResolver` as `AddTransient` in Jellyfin's `IServiceCollection`.
+* **Service Disposal**: `TmdbClientService` implements `IDisposable` to dispose internal `TMDbClient` resources.
+* **Shutdown & Assembly Unload Safety**: `Plugin` implements `IDisposable` to handle explicit plugin unload cleanup:
+  * Resets `Plugin.Instance = null`.
+  * Invokes `ShowOrganizerEpisodeProvider.ResetState()` to clear static deduplication dictionaries (`_activatedSeriesGroups` and `_loggedFailedMappings`).
+  * Invokes `TmdbClientService.ResetCredentialLogged()` to reset credential log flags across plugin updates.

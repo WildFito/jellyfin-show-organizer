@@ -1089,5 +1089,25 @@ namespace Jellyfin.Plugin.ShowOrganizer.Tests
             Assert.NotNull(result.Item);
             Assert.Equal("Saiyan Arrival", result.Item.Name);
         }
+
+        [Fact]
+        public void BuildVersion_AssemblyFileVersion_Matches_BuildYamlVersion()
+        {
+            var asm = typeof(Plugin).Assembly;
+            var fileVersion = System.Diagnostics.FileVersionInfo.GetVersionInfo(asm.Location).FileVersion;
+            Assert.NotNull(fileVersion);
+
+            var yamlPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "build.yaml"));
+            if (File.Exists(yamlPath))
+            {
+                var yamlContent = File.ReadAllText(yamlPath);
+                var match = System.Text.RegularExpressions.Regex.Match(yamlContent, @"version:\s*[""']?([^""'\r\n]+)[""']?");
+                if (match.Success)
+                {
+                    var expectedVersion = match.Groups[1].Value.Trim();
+                    Assert.Equal(expectedVersion, fileVersion);
+                }
+            }
+        }
     }
 }

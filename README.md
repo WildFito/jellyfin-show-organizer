@@ -115,19 +115,3 @@ For developer details, coordinate mapping invariants, provider return semantics,
 * [NFO Format Specification](docs/nfo-format.md)
 * [Development Guide](docs/development.md)
 * [Release and Packaging Guide](docs/releasing.md)
-
-## Development
-
-### Building the Plugin
-
-```bash
-dotnet restore
-dotnet build --configuration Release
-```
-
-### Running Tests
-
-```bash
-dotnet test
-```
-*(If your host SDK is higher than .NET 9, configure roll-forward: `$env:DOTNET_ROLL_FORWARD="Major"; dotnet test`)*
