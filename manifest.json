@@ -9,6 +9,14 @@
         "imageUrl": "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png",
         "versions": [
             {
+                "version": "1.1.0.0",
+                "changelog": "Upgrade for Jellyfin 12 and .NET 10 (targetAbi 12.0.0.0): refactored codebase with C# primary constructors and file-scoped namespaces, updated TMDbLib 3.0 episode coordinate mappings, comprehensive unit test coverage, and performance optimizations.",
+                "targetAbi": "12.0.0.0",
+                "sourceUrl": "https://github.com/WildFito/jellyfin-show-organizer/releases/download/v1.1.0.0/showorganizer_1.1.0.0.zip",
+                "checksum": "057e4774f6f16eeef84b3e63c1872c79",
+                "timestamp": "2026-09-23T20:35:43Z"
+            },
+            {
                 "version": "1.0.0.0",
                 "changelog": "First stable production release (1.0.0.0): full TMDb Episode Group metadata resolution, preservation of custom Jellyfin SxxExx numbering, raw Episode Group ID support, deduplicated warning logging, Episode Group caching, and request coalescing.",
                 "targetAbi": "10.11.0.0",
