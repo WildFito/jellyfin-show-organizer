@@ -30,9 +30,6 @@ ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a sp
 
 * **Supported Metadata Provider**: [The Movie Database (TMDb)](https://www.themoviedb.org/)
 
-> [!IMPORTANT]
-> **Provider priority:** In the relevant Jellyfin TV metadata provider settings, place **ShowOrganizer first** so it gets the first opportunity to resolve episodes using the selected TMDb Episode Group. If ShowOrganizer cannot provide metadata for an item, Jellyfin can continue to the following configured provider.
-
 ## Installation
 
 ### Repository Installation (Recommended)
@@ -52,7 +49,14 @@ ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a sp
 
 ## How to Use
 
-### 1. Find the IDs on TMDb
+### 1. Set Provider Priority (One-Time Library Setup)
+
+In your Jellyfin administrator panel:
+1. Go to **Dashboard -> Libraries** and click the `...` menu on your TV Shows library, then select **Manage Library**.
+2. Under **Season & Episode Metadata Downloaders**, ensure **ShowOrganizer** is enabled and moved **before TheMovieDb (TMDb)** (ideally first).
+3. Click **Save**.
+
+### 2. Find the IDs on TMDb
 
 To configure a show, you need two IDs from [The Movie Database (TMDb)](https://www.themoviedb.org/):
 
@@ -66,7 +70,7 @@ To configure a show, you need two IDs from [The Movie Database (TMDb)](https://w
   Copy the Episode Group ID following `/episode_group/`:
   `/episode_group/648fc7202f8d0900e3864f62` $\rightarrow$ `648fc7202f8d0900e3864f62`
 
-### 2. Configure the Series in Jellyfin
+### 3. Configure the Series in Jellyfin
 
 1. Open the TV series in your Jellyfin web interface.
 2. Click the three dots `...` and select **Edit Metadata**.
@@ -82,14 +86,14 @@ To configure a show, you need two IDs from [The Movie Database (TMDb)](https://w
 > Depending on your Jellyfin language/locale setting, *Programme Id* may appear as *Series Id*.
 > Legacy `tmdb:<episode-group-id>` values remain supported for backward compatibility.
 
-### 3. Refresh Existing Metadata
+### 4. Refresh Existing Metadata
 
 When configuring or updating ShowOrganizer on an existing series or library folder:
 
 1. Ensure the relevant series or episode metadata fields are not locked in Jellyfin (locked metadata fields prevent Jellyfin from replacing existing metadata).
 2. Click `...` on the series, select **Refresh Metadata**, and choose **Replace all metadata**.
 
-### 4. How the Mapping Works
+## How the Mapping Works
 
 ShowOrganizer uses the season and episode numbering of your Jellyfin library to locate the corresponding episode in the selected TMDb Episode Group.
 
@@ -98,7 +102,7 @@ It then resolves that entry to the canonical TMDb episode and retrieves its meta
 ShowOrganizer does not rename or renumber your files.
 
 > [!NOTE]
-> **Provider fallback:** ShowOrganizer follows Jellyfin's standard metadata-provider behavior. If it cannot provide metadata for an item — for example because no Show Group is configured or the episode cannot be mapped — it returns no metadata for that item and Jellyfin can continue with the following configured provider.
+> **Provider fallback:** ShowOrganizer follows Jellyfin's standard metadata-provider behavior. Ideally, **ShowOrganizer should be set before TheMovieDb (TMDb)** in your library's metadata provider list. If it cannot provide metadata for an item — for example because no Show Group is configured or the episode cannot be mapped — it returns no metadata for that item and Jellyfin can continue with the following configured provider.
 
 ## Limitations
 
