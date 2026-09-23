@@ -1,12 +1,20 @@
+<h1 align="center">Jellyfin ShowOrganizer Plugin</h1>
+
+<p align="center">Organize Jellyfin TV shows using exact TMDb Episode Groups while preserving custom file numbering</p>
+
 <p align="center">
-  <img src="assets/logo.png" alt="ShowOrganizer Logo" width="180">
+  <img src="assets/logo.png" alt="ShowOrganizer Logo" width="600" />
 </p>
 
-# ShowOrganizer Jellyfin Plugin
+<p align="center">
+  <a href="https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml"><img src="https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml/badge.svg" alt="Build Status" /></a>
+  <a href="https://github.com/WildFito/jellyfin-show-organizer/releases"><img src="https://img.shields.io/github/v/release/WildFito/jellyfin-show-organizer?color=blue" alt="GitHub Release" /></a>
+  <a href="https://jellyfin.org"><img src="https://img.shields.io/badge/Jellyfin-12%2B%20%7C%2010.11-00a4dc?logo=jellyfin&logoColor=white" alt="Jellyfin Version" /></a>
+  <a href="https://dotnet.microsoft.com/"><img src="https://img.shields.io/badge/.NET-10.0-512bd4?logo=dotnet&logoColor=white" alt=".NET Runtime" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/WildFito/jellyfin-show-organizer" alt="License" /></a>
+</p>
 
-[![Build ShowOrganizer](https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml/badge.svg)](https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml)
-[![GitHub Release](https://img.shields.io/github/v/release/WildFito/jellyfin-show-organizer)](https://github.com/WildFito/jellyfin-show-organizer/releases)
-[![License](https://img.shields.io/github/license/WildFito/jellyfin-show-organizer)](LICENSE)
+## About
 
 ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a specific [The Movie Database (TMDb)](https://www.themoviedb.org/) Episode Group — such as a saga, story arc, or alternative episode ordering — while preserving the custom season and episode numbering used by the files in Jellyfin. ShowOrganizer maps each custom Jellyfin `SxxExx` episode to its canonical TMDb episode so Jellyfin can retrieve the correct metadata without renumbering the user's library.
 
