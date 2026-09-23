@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="ShowOrganizer Logo" width="180">
+</p>
+
 # ShowOrganizer Jellyfin Plugin
 
 [![Build ShowOrganizer](https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml/badge.svg)](https://github.com/WildFito/jellyfin-show-organizer/actions/workflows/build.yml)
@@ -8,7 +12,14 @@ ShowOrganizer is a metadata provider for Jellyfin that lets a TV series use a sp
 
 ## Compatibility & Requirements
 
-* **Supported Jellyfin Server Version**: 10.11.x (currently built and tested against **10.11.11**, targetAbi `10.11.0.0`)
+### Version Compatibility Matrix
+
+| ShowOrganizer Version | Jellyfin Server Version | .NET Runtime | Target ABI | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **1.1.x** | **12.0.x+** | **.NET 10** (`net10.0`) | `12.0.0.0` | **Current (Active)** |
+| **1.0.x** | 10.11.x | .NET 9 (`net9.0`) | `10.11.0.0` | Legacy Support |
+| **0.1.x – 0.2.x** | 10.11.x | .NET 9 (`net9.0`) | `10.11.0.0` | Deprecated |
+
 * **Supported Metadata Provider**: [The Movie Database (TMDb)](https://www.themoviedb.org/)
 
 > [!IMPORTANT]

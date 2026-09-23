@@ -8,7 +8,6 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Data.Enums;
-using Jellyfin.Plugin.ShowOrganizer.Models;
 using Jellyfin.Plugin.ShowOrganizer.Services;
 using MediaBrowser.Common.Net;
 using MediaBrowser.Controller.Entities;
@@ -19,401 +18,429 @@ using MediaBrowser.Model.Providers;
 using Microsoft.Extensions.Logging;
 using TMDbLib.Objects.TvShows;
 
-namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb
+namespace Jellyfin.Plugin.ShowOrganizer.Providers.Tmdb;
+
+public class ShowOrganizerEpisodeProvider(
+    TmdbClientService tmdbClientService,
+    TmdbExactOrderResolver resolver,
+    IHttpClientFactory httpClientFactory,
+    ILogger<ShowOrganizerEpisodeProvider> logger,
+    ShowOrganizerEligibilityEvaluator? eligibilityEvaluator = null) : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
 {
-    public class ShowOrganizerEpisodeProvider : IRemoteMetadataProvider<Episode, EpisodeInfo>, IHasOrder
+    private static readonly ConcurrentDictionary<string, bool> _activatedSeriesGroups = new();
+    private static readonly ConcurrentDictionary<string, bool> _loggedFailedMappings = new();
+
+    public static int ResetState(ILogger? logger = null)
     {
-        private static readonly ConcurrentDictionary<string, bool> _activatedSeriesGroups = new();
-        private static readonly ConcurrentDictionary<string, bool> _loggedFailedMappings = new();
+        var count = _activatedSeriesGroups.Count + _loggedFailedMappings.Count;
+        _activatedSeriesGroups.Clear();
+        _loggedFailedMappings.Clear();
+        logger?.LogInformation("ShowOrganizer: Clearing static provider state during plugin shutdown. Entries cleared={Count}", count);
+        return count;
+    }
 
-        public static int ResetState(ILogger? logger = null)
+    private readonly TmdbClientService _tmdbClientService = tmdbClientService;
+    private readonly TmdbExactOrderResolver _resolver = resolver;
+    private readonly IHttpClientFactory _httpClientFactory = httpClientFactory;
+    private readonly ILogger<ShowOrganizerEpisodeProvider> _logger = logger;
+    private readonly ShowOrganizerEligibilityEvaluator _eligibilityEvaluator = eligibilityEvaluator ?? new ShowOrganizerEligibilityEvaluator();
+
+    public int Order => 0;
+
+    public string Name => "ShowOrganizer";
+
+    public async Task<IEnumerable<RemoteSearchResult>> GetSearchResults(EpisodeInfo searchInfo, CancellationToken cancellationToken)
+    {
+        if (!searchInfo.IndexNumber.HasValue)
         {
-            var count = _activatedSeriesGroups.Count + _loggedFailedMappings.Count;
-            _activatedSeriesGroups.Clear();
-            _loggedFailedMappings.Clear();
-            logger?.LogInformation("ShowOrganizer: Clearing static provider state during plugin shutdown. Entries cleared={Count}", count);
-            return count;
+            return Array.Empty<RemoteSearchResult>();
         }
 
-        private readonly TmdbClientService _tmdbClientService;
-        private readonly TmdbExactOrderResolver _resolver;
-        private readonly IHttpClientFactory _httpClientFactory;
-        private readonly ILogger<ShowOrganizerEpisodeProvider> _logger;
-        private readonly ShowOrganizerEligibilityEvaluator _eligibilityEvaluator;
+        var metadataResult = await GetMetadata(searchInfo, cancellationToken).ConfigureAwait(false);
 
-        public ShowOrganizerEpisodeProvider(
-            TmdbClientService tmdbClientService,
-            TmdbExactOrderResolver resolver,
-            IHttpClientFactory httpClientFactory,
-            ILogger<ShowOrganizerEpisodeProvider> logger)
-            : this(tmdbClientService, resolver, httpClientFactory, logger, null!)
+        if (!metadataResult.HasMetadata)
         {
+            return Array.Empty<RemoteSearchResult>();
         }
 
-        public ShowOrganizerEpisodeProvider(
-            TmdbClientService tmdbClientService,
-            TmdbExactOrderResolver resolver,
-            IHttpClientFactory httpClientFactory,
-            ILogger<ShowOrganizerEpisodeProvider> logger,
-            ShowOrganizerEligibilityEvaluator eligibilityEvaluator)
+        var item = metadataResult.Item;
+
+        return
+        [
+            new RemoteSearchResult
+            {
+                IndexNumber = item.IndexNumber,
+                Name = item.Name,
+                ParentIndexNumber = item.ParentIndexNumber,
+                PremiereDate = item.PremiereDate,
+                ProductionYear = item.ProductionYear,
+                ProviderIds = item.ProviderIds,
+                SearchProviderName = Name,
+                IndexNumberEnd = item.IndexNumberEnd
+            }
+        ];
+    }
+
+    public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
+    {
+        var metadataResult = new MetadataResult<Episode>();
+
+        if (info.IsMissingEpisode)
         {
-            _tmdbClientService = tmdbClientService;
-            _resolver = resolver;
-            _httpClientFactory = httpClientFactory;
-            _logger = logger;
-            _eligibilityEvaluator = eligibilityEvaluator ?? new ShowOrganizerEligibilityEvaluator();
+            return metadataResult;
         }
 
-        public int Order => 0;
-
-        public string Name => "ShowOrganizer";
-
-        public async Task<IEnumerable<RemoteSearchResult>> GetSearchResults(EpisodeInfo searchInfo, CancellationToken cancellationToken)
+        var seriesIdentity = ShowOrganizerEligibilityEvaluator.GetSeriesIdentity(info);
+        var eligibility = _eligibilityEvaluator.Evaluate(info.SeriesProviderIds, seriesIdentity, _logger);
+        if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
         {
-            if (!searchInfo.IndexNumber.HasValue)
-            {
-                return Enumerable.Empty<RemoteSearchResult>();
-            }
-
-            var metadataResult = await GetMetadata(searchInfo, cancellationToken).ConfigureAwait(false);
-
-            if (!metadataResult.HasMetadata)
-            {
-                return Enumerable.Empty<RemoteSearchResult>();
-            }
-
-            var item = metadataResult.Item;
-
-            return new[]
-            {
-                new RemoteSearchResult
-                {
-                    IndexNumber = item.IndexNumber,
-                    Name = item.Name,
-                    ParentIndexNumber = item.ParentIndexNumber,
-                    PremiereDate = item.PremiereDate,
-                    ProductionYear = item.ProductionYear,
-                    ProviderIds = item.ProviderIds,
-                    SearchProviderName = Name,
-                    IndexNumberEnd = item.IndexNumberEnd
-                }
-            };
-        }
-
-        public async Task<MetadataResult<Episode>> GetMetadata(EpisodeInfo info, CancellationToken cancellationToken)
-        {
-            var metadataResult = new MetadataResult<Episode>();
-
-            if (info.IsMissingEpisode)
-            {
-                return metadataResult;
-            }
-
-            var seriesIdentity = ShowOrganizerEligibilityEvaluator.GetSeriesIdentity(info);
-            var eligibility = _eligibilityEvaluator.Evaluate(info.SeriesProviderIds, seriesIdentity, _logger);
-            if (eligibility.State != ShowOrganizerEligibilityState.Eligible)
-            {
-                if (_logger.IsEnabled(LogLevel.Debug))
-                {
-                    _logger.LogDebug("ShowOrganizer: Episode provider declined item S{Season:02}E{Episode:02} for series. Reason: {State}",
-                        info.ParentIndexNumber ?? 1, info.IndexNumber, eligibility.State);
-                }
-                return metadataResult;
-            }
-
-            var orderRef = eligibility.OrderReference!;
-            var seriesTmdbId = eligibility.SeriesTmdbId;
-            var seasonNumber = info.ParentIndexNumber ?? 1;
-            var episodeNumber = info.IndexNumber;
-
-            if (!episodeNumber.HasValue)
-            {
-                return metadataResult;
-            }
-
             if (_logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug("ShowOrganizer: Resolving custom S{Season:02}E{Episode:02} for series TMDb {SeriesId} using group {GroupId}.",
-                    seasonNumber, episodeNumber.Value, seriesTmdbId, orderRef.OrderId);
+                _logger.LogDebug(
+                    "ShowOrganizer: Episode provider declined item S{Season:02}E{Episode:02} for series. Reason: {State}",
+                    info.ParentIndexNumber ?? 1,
+                    info.IndexNumber,
+                    eligibility.State);
             }
+            return metadataResult;
+        }
 
-            var (resolvedSeason, resolvedEpisode) = await _resolver.ResolveCoordinatesAsync(
-                seriesTmdbId,
+        var orderRef = eligibility.OrderReference!;
+        var seriesTmdbId = eligibility.SeriesTmdbId;
+        var seasonNumber = info.ParentIndexNumber ?? 1;
+        var episodeNumber = info.IndexNumber;
+
+        if (!episodeNumber.HasValue)
+        {
+            return metadataResult;
+        }
+
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug(
+                "ShowOrganizer: Resolving custom S{Season:02}E{Episode:02} for series TMDb {SeriesId} using group {GroupId}.",
                 seasonNumber,
                 episodeNumber.Value,
-                orderRef,
-                info.MetadataLanguage,
-                cancellationToken).ConfigureAwait(false);
+                seriesTmdbId,
+                orderRef.OrderId);
+        }
 
-            if (resolvedSeason <= 0 || resolvedEpisode <= 0)
-            {
-                if (_logger.IsEnabled(LogLevel.Debug))
-                {
-                    _logger.LogDebug(
-                        "ShowOrganizer: Could not map custom S{Season:02}E{Episode:02} (End={IndexEnd}, Lang={Lang}, Country={Country}) for series TMDb {SeriesId} using group {GroupId}.",
-                        seasonNumber, episodeNumber.Value, info.IndexNumberEnd, info.MetadataLanguage, info.MetadataCountryCode, seriesTmdbId, orderRef.OrderId);
-                }
-                metadataResult.HasMetadata = false;
-                metadataResult.Item = null!;
-                return metadataResult;
-            }
+        var (resolvedSeason, resolvedEpisode) = await _resolver.ResolveCoordinatesAsync(
+            seriesTmdbId,
+            seasonNumber,
+            episodeNumber.Value,
+            orderRef,
+            info.MetadataLanguage,
+            cancellationToken).ConfigureAwait(false);
 
-            var activationKey = $"{seriesTmdbId}:{orderRef.OrderId}";
-            if (_activatedSeriesGroups.TryAdd(activationKey, true))
-            {
-                _logger.LogInformation("ShowOrganizer: Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
-            }
-
+        if (resolvedSeason <= 0 || resolvedEpisode <= 0)
+        {
             if (_logger.IsEnabled(LogLevel.Debug))
             {
-                _logger.LogDebug("ShowOrganizer: Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.", seasonNumber, episodeNumber.Value, resolvedSeason, resolvedEpisode, orderRef.OrderId);
+                _logger.LogDebug(
+                    "ShowOrganizer: Could not map custom S{Season:02}E{Episode:02} (End={IndexEnd}, Lang={Lang}, Country={Country}) for series TMDb {SeriesId} using group {GroupId}.",
+                    seasonNumber,
+                    episodeNumber.Value,
+                    info.IndexNumberEnd,
+                    info.MetadataLanguage,
+                    info.MetadataCountryCode,
+                    seriesTmdbId,
+                    orderRef.OrderId);
+            }
+            metadataResult.HasMetadata = false;
+            metadataResult.Item = null!;
+            return metadataResult;
+        }
+
+        var activationKey = $"{seriesTmdbId}:{orderRef.OrderId}";
+        if (_activatedSeriesGroups.TryAdd(activationKey, true))
+        {
+            _logger.LogInformation("ShowOrganizer: Activated for series (TMDb {TmdbId}) using episode group {GroupId}.", seriesTmdbId, orderRef.OrderId);
+        }
+
+        if (_logger.IsEnabled(LogLevel.Debug))
+        {
+            _logger.LogDebug(
+                "ShowOrganizer: Mapped custom S{Season:02}E{Episode:02} -> TMDb S{CanonicalSeason:02}E{CanonicalEpisode:02} using group {GroupId}.",
+                seasonNumber,
+                episodeNumber.Value,
+                resolvedSeason,
+                resolvedEpisode,
+                orderRef.OrderId);
+        }
+
+        TvEpisode? episodeResult = null;
+        if (info.IndexNumberEnd.HasValue)
+        {
+            var startindex = episodeNumber.Value;
+            var endindex = info.IndexNumberEnd.Value;
+            List<TvEpisode>? result = null;
+
+            for (int episode = startindex; episode <= endindex; episode++)
+            {
+                var (currSeason, currEpisode) = await _resolver.ResolveCoordinatesAsync(
+                    seriesTmdbId,
+                    seasonNumber,
+                    episode,
+                    orderRef,
+                    info.MetadataLanguage,
+                    cancellationToken).ConfigureAwait(false);
+
+                var episodeInfo = await _tmdbClientService.GetTvEpisodeAsync(
+                    seriesTmdbId,
+                    currSeason,
+                    currEpisode,
+                    info.MetadataLanguage,
+                    null,
+                    info.MetadataCountryCode,
+                    cancellationToken).ConfigureAwait(false);
+
+                if (episodeInfo is not null)
+                {
+                    (result ??= []).Add(episodeInfo);
+                }
             }
 
-            TvEpisode? episodeResult = null;
-            if (info.IndexNumberEnd.HasValue)
+            if (result is not null)
             {
-                var startindex = episodeNumber.Value;
-                var endindex = info.IndexNumberEnd.Value;
-                List<TvEpisode>? result = null;
-
-                for (int episode = startindex; episode <= endindex; episode++)
+                episodeResult = new TvEpisode
                 {
-                    var (currSeason, currEpisode) = await _resolver.ResolveCoordinatesAsync(
-                        seriesTmdbId,
-                        seasonNumber,
-                        episode,
-                        orderRef,
-                        info.MetadataLanguage,
-                        cancellationToken).ConfigureAwait(false);
+                    Name = result[0].Name,
+                    Overview = result[0].Overview,
+                    AirDate = result[0].AirDate,
+                    VoteAverage = result[0].VoteAverage,
+                    ExternalIds = result[0].ExternalIds,
+                    Videos = result[0].Videos,
+                    Credits = result[0].Credits
+                };
 
-                    var episodeInfo = await _tmdbClientService.GetTvEpisodeAsync(seriesTmdbId, currSeason, currEpisode, info.MetadataLanguage, null, info.MetadataCountryCode, cancellationToken).ConfigureAwait(false);
-                    if (episodeInfo is not null)
+                if (result.Count > 1)
+                {
+                    var name = new StringBuilder(episodeResult.Name);
+                    var overview = new StringBuilder(episodeResult.Overview);
+
+                    for (int i = 1; i < result.Count; i++)
                     {
-                        (result ??= new List<TvEpisode>()).Add(episodeInfo);
+                        name.Append(" / ").Append(result[i].Name);
+                        overview.Append(" / ").Append(result[i].Overview);
                     }
-                }
 
-                if (result is not null)
-                {
-                    episodeResult = new TvEpisode()
-                    {
-                        Name = result[0].Name,
-                        Overview = result[0].Overview,
-                        AirDate = result[0].AirDate,
-                        VoteAverage = result[0].VoteAverage,
-                        ExternalIds = result[0].ExternalIds,
-                        Videos = result[0].Videos,
-                        Credits = result[0].Credits
-                    };
-
-                    if (result.Count > 1)
-                    {
-                        var name = new StringBuilder(episodeResult.Name);
-                        var overview = new StringBuilder(episodeResult.Overview);
-
-                        for (int i = 1; i < result.Count; i++)
-                        {
-                            name.Append(" / ").Append(result[i].Name);
-                            overview.Append(" / ").Append(result[i].Overview);
-                        }
-
-                        episodeResult.Name = name.ToString();
-                        episodeResult.Overview = overview.ToString();
-                    }
-                }
-                else
-                {
-                    return metadataResult;
+                    episodeResult.Name = name.ToString();
+                    episodeResult.Overview = overview.ToString();
                 }
             }
             else
             {
-                episodeResult = await _tmdbClientService.GetTvEpisodeAsync(seriesTmdbId, resolvedSeason, resolvedEpisode, info.MetadataLanguage, null, info.MetadataCountryCode, cancellationToken).ConfigureAwait(false);
-            }
-
-            if (episodeResult is null)
-            {
                 return metadataResult;
             }
+        }
+        else
+        {
+            episodeResult = await _tmdbClientService.GetTvEpisodeAsync(
+                seriesTmdbId,
+                resolvedSeason,
+                resolvedEpisode,
+                info.MetadataLanguage,
+                null,
+                info.MetadataCountryCode,
+                cancellationToken).ConfigureAwait(false);
+        }
 
-            metadataResult.HasMetadata = true;
-            metadataResult.QueriedById = true;
-
-            if (!string.IsNullOrEmpty(episodeResult.Overview))
-            {
-                metadataResult.ResultLanguage = info.MetadataLanguage;
-            }
-
-            var item = new Episode
-            {
-                IndexNumber = info.IndexNumber,
-                ParentIndexNumber = info.ParentIndexNumber,
-                IndexNumberEnd = info.IndexNumberEnd,
-                Name = episodeResult.Name,
-                PremiereDate = episodeResult.AirDate,
-                ProductionYear = episodeResult.AirDate?.Year,
-                Overview = episodeResult.Overview,
-                CommunityRating = Convert.ToSingle(episodeResult.VoteAverage)
-            };
-
-            var externalIds = episodeResult.ExternalIds;
-            item.TrySetProviderId(MetadataProvider.Tvdb, externalIds?.TvdbId);
-            item.TrySetProviderId(MetadataProvider.Imdb, externalIds?.ImdbId);
-            item.TrySetProviderId(MetadataProvider.TvRage, externalIds?.TvrageId);
-
-            if (episodeResult.Videos?.Results is not null)
-            {
-                foreach (var video in episodeResult.Videos.Results)
-                {
-                    if (IsTrailerType(video))
-                    {
-                        item.AddTrailerUrl("https://www.youtube.com/watch?v=" + video.Key);
-                    }
-                }
-            }
-
-            var credits = episodeResult.Credits;
-            var config = Plugin.Instance?.Configuration;
-            var hideCast = config?.HideMissingCastMembers ?? false;
-            var maxCast = config?.MaxCastMembers ?? 20;
-
-            if (credits?.Cast is not null)
-            {
-                var castQuery = hideCast
-                    ? credits.Cast.Where(a => !string.IsNullOrEmpty(a.ProfilePath)).OrderBy(a => a.Order)
-                    : credits.Cast.OrderBy(a => a.Order);
-
-                foreach (var actor in castQuery.Take(maxCast))
-                {
-                    if (string.IsNullOrWhiteSpace(actor.Name))
-                    {
-                        continue;
-                    }
-
-                    var personInfo = new PersonInfo
-                    {
-                        Name = actor.Name.Trim(),
-                        Role = actor.Character?.Trim() ?? string.Empty,
-                        Type = PersonKind.Actor,
-                        SortOrder = actor.Order,
-                        ImageUrl = await _tmdbClientService.GetProfileUrlAsync(actor.ProfilePath, cancellationToken).ConfigureAwait(false)
-                    };
-
-                    if (actor.Id > 0)
-                    {
-                        personInfo.SetProviderId(MetadataProvider.Tmdb, actor.Id.ToString(CultureInfo.InvariantCulture));
-                    }
-
-                    metadataResult.AddPerson(personInfo);
-                }
-            }
-
-            if (credits?.GuestStars is not null)
-            {
-                var guestQuery = hideCast
-                    ? credits.GuestStars.Where(a => !string.IsNullOrEmpty(a.ProfilePath)).OrderBy(a => a.Order)
-                    : credits.GuestStars.OrderBy(a => a.Order);
-
-                foreach (var guest in guestQuery.Take(maxCast))
-                {
-                    if (string.IsNullOrWhiteSpace(guest.Name))
-                    {
-                        continue;
-                    }
-
-                    var personInfo = new PersonInfo
-                    {
-                        Name = guest.Name.Trim(),
-                        Role = guest.Character?.Trim() ?? string.Empty,
-                        Type = PersonKind.GuestStar,
-                        SortOrder = guest.Order,
-                        ImageUrl = await _tmdbClientService.GetProfileUrlAsync(guest.ProfilePath, cancellationToken).ConfigureAwait(false)
-                    };
-
-                    if (guest.Id > 0)
-                    {
-                        personInfo.SetProviderId(MetadataProvider.Tmdb, guest.Id.ToString(CultureInfo.InvariantCulture));
-                    }
-
-                    metadataResult.AddPerson(personInfo);
-                }
-            }
-
-            var hideCrew = config?.HideMissingCrewMembers ?? false;
-            var maxCrew = config?.MaxCrewMembers ?? 10;
-
-            if (credits?.Crew is not null)
-            {
-                var crewQuery = credits.Crew
-                    .Select(crewMember => new
-                    {
-                        CrewMember = crewMember,
-                        PersonType = MapCrewToPersonType(crewMember)
-                    })
-                    .Where(entry => entry.PersonType == PersonKind.Director || entry.PersonType == PersonKind.Writer || entry.PersonType == PersonKind.Producer);
-
-                if (hideCrew)
-                {
-                    crewQuery = crewQuery.Where(entry => !string.IsNullOrEmpty(entry.CrewMember.ProfilePath));
-                }
-
-                foreach (var entry in crewQuery.Take(maxCrew))
-                {
-                    var crewMember = entry.CrewMember;
-
-                    if (string.IsNullOrWhiteSpace(crewMember.Name))
-                    {
-                        continue;
-                    }
-
-                    var personInfo = new PersonInfo
-                    {
-                        Name = crewMember.Name.Trim(),
-                        Role = crewMember.Job?.Trim() ?? string.Empty,
-                        Type = entry.PersonType,
-                        ImageUrl = await _tmdbClientService.GetProfileUrlAsync(crewMember.ProfilePath, cancellationToken).ConfigureAwait(false)
-                    };
-
-                    if (crewMember.Id > 0)
-                    {
-                        personInfo.SetProviderId(MetadataProvider.Tmdb, crewMember.Id.ToString(CultureInfo.InvariantCulture));
-                    }
-
-                    metadataResult.AddPerson(personInfo);
-                }
-            }
-
-            metadataResult.Item = item;
+        if (episodeResult is null)
+        {
             return metadataResult;
         }
 
-        public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
+        metadataResult.HasMetadata = true;
+        metadataResult.QueriedById = true;
+
+        if (!string.IsNullOrEmpty(episodeResult.Overview))
         {
-            return _httpClientFactory.CreateClient(NamedClient.Default).GetAsync(url, cancellationToken);
+            metadataResult.ResultLanguage = info.MetadataLanguage;
         }
 
-        private static bool IsTrailerType(TMDbLib.Objects.General.Video video)
+        var item = new Episode
         {
-            return string.Equals(video.Type, "Trailer", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(video.Site, "YouTube", StringComparison.OrdinalIgnoreCase);
+            IndexNumber = info.IndexNumber,
+            ParentIndexNumber = info.ParentIndexNumber,
+            IndexNumberEnd = info.IndexNumberEnd,
+            Name = episodeResult.Name,
+            PremiereDate = episodeResult.AirDate,
+            ProductionYear = episodeResult.AirDate?.Year,
+            Overview = episodeResult.Overview,
+            CommunityRating = Convert.ToSingle(episodeResult.VoteAverage)
+        };
+
+        var externalIds = episodeResult.ExternalIds;
+        item.TrySetProviderId(MetadataProvider.Tvdb, externalIds?.TvdbId);
+        item.TrySetProviderId(MetadataProvider.Imdb, externalIds?.ImdbId);
+        item.TrySetProviderId(MetadataProvider.TvRage, externalIds?.TvrageId);
+
+        if (episodeResult.Videos?.Results is not null)
+        {
+            var trailers = new List<MediaUrl>();
+            foreach (var video in episodeResult.Videos.Results)
+            {
+                if (IsTrailerType(video))
+                {
+                    trailers.Add(new MediaUrl
+                    {
+                        Url = "https://www.youtube.com/watch?v=" + video.Key,
+                        Name = video.Name
+                    });
+                }
+            }
+
+            if (trailers.Count > 0)
+            {
+                item.RemoteTrailers = trailers;
+            }
         }
 
-        private static PersonKind MapCrewToPersonType(TMDbLib.Objects.General.Crew crewMember)
+        var credits = episodeResult.Credits;
+        var config = Plugin.Instance?.Configuration;
+        var hideCast = config?.HideMissingCastMembers ?? false;
+        var maxCast = config?.MaxCastMembers ?? 20;
+
+        if (credits?.Cast is not null)
         {
-            if (string.Equals(crewMember.Department, "Directing", StringComparison.OrdinalIgnoreCase))
+            var castQuery = hideCast
+                ? credits.Cast.Where(a => !string.IsNullOrEmpty(a.ProfilePath)).OrderBy(a => a.Order)
+                : credits.Cast.OrderBy(a => a.Order);
+
+            foreach (var actor in castQuery.Take(maxCast))
             {
-                return PersonKind.Director;
+                if (string.IsNullOrWhiteSpace(actor.Name))
+                {
+                    continue;
+                }
+
+                var personInfo = new PersonInfo
+                {
+                    Name = actor.Name.Trim(),
+                    Role = actor.Character?.Trim() ?? string.Empty,
+                    Type = PersonKind.Actor,
+                    SortOrder = actor.Order,
+                    ImageUrl = await _tmdbClientService.GetProfileUrlAsync(actor.ProfilePath, cancellationToken).ConfigureAwait(false)
+                };
+
+                if (actor.Id > 0)
+                {
+                    personInfo.SetProviderId(MetadataProvider.Tmdb, actor.Id.ToString(CultureInfo.InvariantCulture));
+                }
+
+                metadataResult.AddPerson(personInfo);
             }
-            if (string.Equals(crewMember.Department, "Writing", StringComparison.OrdinalIgnoreCase))
-            {
-                return PersonKind.Writer;
-            }
-            if (string.Equals(crewMember.Department, "Production", StringComparison.OrdinalIgnoreCase)
-                && string.Equals(crewMember.Job, "Producer", StringComparison.OrdinalIgnoreCase))
-            {
-                return PersonKind.Producer;
-            }
-            return PersonKind.Unknown;
         }
+
+        if (credits?.GuestStars is not null)
+        {
+            var guestQuery = hideCast
+                ? credits.GuestStars.Where(a => !string.IsNullOrEmpty(a.ProfilePath)).OrderBy(a => a.Order)
+                : credits.GuestStars.OrderBy(a => a.Order);
+
+            foreach (var guest in guestQuery.Take(maxCast))
+            {
+                if (string.IsNullOrWhiteSpace(guest.Name))
+                {
+                    continue;
+                }
+
+                var personInfo = new PersonInfo
+                {
+                    Name = guest.Name.Trim(),
+                    Role = guest.Character?.Trim() ?? string.Empty,
+                    Type = PersonKind.GuestStar,
+                    SortOrder = guest.Order,
+                    ImageUrl = await _tmdbClientService.GetProfileUrlAsync(guest.ProfilePath, cancellationToken).ConfigureAwait(false)
+                };
+
+                if (guest.Id > 0)
+                {
+                    personInfo.SetProviderId(MetadataProvider.Tmdb, guest.Id.ToString(CultureInfo.InvariantCulture));
+                }
+
+                metadataResult.AddPerson(personInfo);
+            }
+        }
+
+        var hideCrew = config?.HideMissingCrewMembers ?? false;
+        var maxCrew = config?.MaxCrewMembers ?? 10;
+
+        if (credits?.Crew is not null)
+        {
+            var crewQuery = credits.Crew
+                .Select(crewMember => new
+                {
+                    CrewMember = crewMember,
+                    PersonType = MapCrewToPersonType(crewMember)
+                })
+                .Where(entry => entry.PersonType is PersonKind.Director or PersonKind.Writer or PersonKind.Producer);
+
+            if (hideCrew)
+            {
+                crewQuery = crewQuery.Where(entry => !string.IsNullOrEmpty(entry.CrewMember.ProfilePath));
+            }
+
+            foreach (var entry in crewQuery.Take(maxCrew))
+            {
+                var crewMember = entry.CrewMember;
+
+                if (string.IsNullOrWhiteSpace(crewMember.Name))
+                {
+                    continue;
+                }
+
+                var personInfo = new PersonInfo
+                {
+                    Name = crewMember.Name.Trim(),
+                    Role = crewMember.Job?.Trim() ?? string.Empty,
+                    Type = entry.PersonType,
+                    ImageUrl = await _tmdbClientService.GetProfileUrlAsync(crewMember.ProfilePath, cancellationToken).ConfigureAwait(false)
+                };
+
+                if (crewMember.Id > 0)
+                {
+                    personInfo.SetProviderId(MetadataProvider.Tmdb, crewMember.Id.ToString(CultureInfo.InvariantCulture));
+                }
+
+                metadataResult.AddPerson(personInfo);
+            }
+        }
+
+        metadataResult.Item = item;
+        return metadataResult;
+    }
+
+    public Task<HttpResponseMessage> GetImageResponse(string url, CancellationToken cancellationToken)
+    {
+        return _httpClientFactory.CreateClient(NamedClient.Default).GetAsync(url, cancellationToken);
+    }
+
+    private static bool IsTrailerType(TMDbLib.Objects.General.Video video)
+    {
+        return string.Equals(video.Type, "Trailer", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(video.Site, "YouTube", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static PersonKind MapCrewToPersonType(TMDbLib.Objects.General.Crew crewMember)
+    {
+        if (string.Equals(crewMember.Department, "Directing", StringComparison.OrdinalIgnoreCase))
+        {
+            return PersonKind.Director;
+        }
+
+        if (string.Equals(crewMember.Department, "Writing", StringComparison.OrdinalIgnoreCase))
+        {
+            return PersonKind.Writer;
+        }
+
+        if (string.Equals(crewMember.Department, "Production", StringComparison.OrdinalIgnoreCase)
+            && string.Equals(crewMember.Job, "Producer", StringComparison.OrdinalIgnoreCase))
+        {
+            return PersonKind.Producer;
+        }
+
+        return PersonKind.Unknown;
     }
 }

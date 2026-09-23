@@ -1,8 +1,8 @@
 name: "ShowOrganizer"
 guid: "f98bb2d0-ea65-4f36-be5d-ff63d7d7b1d1"
-version: "1.0.0.0"
-targetAbi: "10.11.0.0"
-framework: "net9.0"
+version: "1.1.0.0"
+targetAbi: "12.0.0.0"
+framework: "net10.0"
 category: "Metadata"
 owner: "WildFito"
 overview: "Organize Jellyfin TV shows using exact TMDb Episode Groups while preserving custom file numbering and retrieving canonical TMDb metadata."
@@ -10,4 +10,4 @@ description: "Allows a Jellyfin TV series to use a specific The Movie Database (
 imageUrl: "https://raw.githubusercontent.com/WildFito/jellyfin-show-organizer/main/assets/logo.png"
 artifacts:
   - "Jellyfin.Plugin.ShowOrganizer.dll"
-changelog: "First stable production release (1.0.0.0): full TMDb Episode Group metadata resolution, preservation of custom Jellyfin SxxExx numbering, raw Episode Group ID support, deduplicated warning logging, Episode Group caching, and request coalescing."
+changelog: "Upgrade for Jellyfin 12 and .NET 10 (targetAbi 12.0.0.0): refactored codebase with C# primary constructors and file-scoped namespaces, updated TMDbLib 3.0 episode coordinate mappings, comprehensive unit test coverage, and performance optimizations."

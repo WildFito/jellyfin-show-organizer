@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
@@ -9,493 +10,479 @@ using Microsoft.Extensions.Logging;
 using TMDbLib.Client;
 using TMDbLib.Objects.TvShows;
 
-namespace Jellyfin.Plugin.ShowOrganizer.Services
+namespace Jellyfin.Plugin.ShowOrganizer.Services;
+
+public class TmdbClientService(
+    IMemoryCache memoryCache,
+    IPluginManager? pluginManager = null,
+    ILogger<TmdbClientService>? logger = null) : IDisposable
 {
-    public class TmdbClientService : IDisposable
+    private const int CacheDurationInHours = 1;
+    private const string TmdbImageBaseUrl = "https://image.tmdb.org/t/p/";
+
+    private readonly IMemoryCache _memoryCache = memoryCache;
+    private readonly IPluginManager? _pluginManager = pluginManager;
+    private readonly ILogger<TmdbClientService>? _logger = logger;
+
+    private TMDbClient? _tmDbClient;
+    private readonly object _clientLock = new();
+    private readonly object _configTaskLock = new();
+    private Task? _configInitializationTask;
+
+    private static bool _credentialLogged;
+    private static readonly ConcurrentDictionary<string, DateTime> _negativeGroupCache = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, bool> _loggedNotFoundWarnings = new(StringComparer.Ordinal);
+    private static readonly ConcurrentDictionary<string, Task<TvGroupCollection?>> _inFlightGroupRequests = new(StringComparer.Ordinal);
+
+    public static void ResetCredentialLogged()
     {
-        private const int CacheDurationInHours = 1;
-        private const string TmdbImageBaseUrl = "https://image.tmdb.org/t/p/";
+        _credentialLogged = false;
+    }
 
-        private readonly IMemoryCache _memoryCache;
-        private readonly IPluginManager? _pluginManager;
-        private readonly ILogger<TmdbClientService>? _logger;
-        private TMDbClient? _tmDbClient;
-        private readonly object _clientLock = new object();
-        private readonly object _configTaskLock = new object();
-        private Task? _configInitializationTask;
-        private static bool _credentialLogged = false;
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTime> _negativeGroupCache = new(StringComparer.Ordinal);
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, bool> _loggedNotFoundWarnings = new(StringComparer.Ordinal);
-        private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Task<TvGroupCollection?>> _inFlightGroupRequests = new(StringComparer.Ordinal);
+    public static int ResetState()
+    {
+        _credentialLogged = false;
+        var count = _negativeGroupCache.Count + _loggedNotFoundWarnings.Count + _inFlightGroupRequests.Count;
+        _negativeGroupCache.Clear();
+        _loggedNotFoundWarnings.Clear();
+        _inFlightGroupRequests.Clear();
+        return count;
+    }
 
-        public static void ResetCredentialLogged()
+    protected virtual TMDbClient? GetClient()
+    {
+        if (_tmDbClient == null)
         {
-            _credentialLogged = false;
-        }
-
-        public static int ResetState()
-        {
-            _credentialLogged = false;
-            var count = _negativeGroupCache.Count + _loggedNotFoundWarnings.Count + _inFlightGroupRequests.Count;
-            _negativeGroupCache.Clear();
-            _loggedNotFoundWarnings.Clear();
-            _inFlightGroupRequests.Clear();
-            return count;
-        }
-
-        public TmdbClientService(IMemoryCache memoryCache)
-            : this(memoryCache, null, null)
-        {
-        }
-
-        public TmdbClientService(IMemoryCache memoryCache, IPluginManager? pluginManager, ILogger<TmdbClientService>? logger)
-        {
-            _memoryCache = memoryCache;
-            _pluginManager = pluginManager;
-            _logger = logger;
-            _logger?.LogDebug("ShowOrganizer: TmdbClientService created.");
-        }
-
-        protected virtual TMDbClient? GetClient()
-        {
-            if (_tmDbClient == null)
+            lock (_clientLock)
             {
-                lock (_clientLock)
+                if (_tmDbClient == null)
                 {
-                    if (_tmDbClient == null)
+                    var apiKey = ResolveTmdbApiKey();
+                    if (string.IsNullOrWhiteSpace(apiKey))
                     {
-                        var apiKey = ResolveTmdbApiKey();
-                        if (string.IsNullOrWhiteSpace(apiKey))
-                        {
-                            return null;
-                        }
-
-                        _tmDbClient = new TMDbClient(apiKey)
-                        {
-                            ThrowApiExceptions = false
-                        };
+                        return null;
                     }
+
+                    _tmDbClient = new TMDbClient(apiKey)
+                    {
+                        ThrowApiExceptions = false
+                    };
                 }
             }
-            return _tmDbClient;
+        }
+        return _tmDbClient;
+    }
+
+    public virtual async Task EnsureClientConfigAsync(CancellationToken cancellationToken = default)
+    {
+        var client = GetClient();
+        if (client == null || client.HasConfig)
+        {
+            return;
         }
 
-        public virtual async Task EnsureClientConfigAsync(CancellationToken cancellationToken = default)
+        Task taskToAwait;
+        lock (_configTaskLock)
         {
-            var client = GetClient();
-            if (client == null || client.HasConfig)
+            if (client.HasConfig)
             {
                 return;
             }
 
-            Task taskToAwait;
-            lock (_configTaskLock)
+            if (_configInitializationTask == null)
             {
-                if (client.HasConfig)
-                {
-                    return;
-                }
-
-                if (_configInitializationTask == null)
-                {
-                    var tcs = new TaskCompletionSource<bool>();
-                    _configInitializationTask = tcs.Task;
-                    taskToAwait = _configInitializationTask;
-                    _ = RunConfigFetchAsync(client, tcs);
-                }
-                else
-                {
-                    taskToAwait = _configInitializationTask;
-                }
+                var tcs = new TaskCompletionSource<bool>();
+                _configInitializationTask = tcs.Task;
+                taskToAwait = _configInitializationTask;
+                _ = RunConfigFetchAsync(client, tcs);
             }
-
-            await taskToAwait.ConfigureAwait(false);
+            else
+            {
+                taskToAwait = _configInitializationTask;
+            }
         }
 
-        private async Task RunConfigFetchAsync(TMDbClient client, TaskCompletionSource<bool> tcs)
+        await taskToAwait.ConfigureAwait(false);
+    }
+
+    private async Task RunConfigFetchAsync(TMDbClient client, TaskCompletionSource<bool> tcs)
+    {
+        try
         {
-            try
+            await ExecuteGetConfigAsync(client).ConfigureAwait(false);
+            if (!client.HasConfig)
             {
-                await ExecuteGetConfigAsync(client).ConfigureAwait(false);
-                if (!client.HasConfig)
-                {
-                    lock (_configTaskLock)
-                    {
-                        _configInitializationTask = null;
-                    }
-                }
-                tcs.TrySetResult(true);
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogWarning(ex, "Failed to retrieve TMDb client configuration. Will attempt retry on future requests.");
                 lock (_configTaskLock)
                 {
                     _configInitializationTask = null;
                 }
-                tcs.TrySetResult(false);
             }
+            tcs.TrySetResult(true);
         }
-
-        protected virtual async Task ExecuteGetConfigAsync(TMDbClient client)
+        catch (Exception ex)
         {
-            await client.GetConfigAsync().ConfigureAwait(false);
+            _logger?.LogWarning(ex, "Failed to retrieve TMDb client configuration. Will attempt retry on future requests.");
+            lock (_configTaskLock)
+            {
+                _configInitializationTask = null;
+            }
+            tcs.TrySetResult(false);
         }
+    }
 
-        public virtual string? ResolveTmdbApiKey()
+    protected virtual async Task ExecuteGetConfigAsync(TMDbClient client)
+    {
+        await client.GetConfigAsync().ConfigureAwait(false);
+    }
+
+    public virtual string? ResolveTmdbApiKey()
+    {
+        var overrideKey = Plugin.Instance?.Configuration?.TmdbApiKey;
+        if (!string.IsNullOrWhiteSpace(overrideKey))
         {
-            var overrideKey = Plugin.Instance?.Configuration?.TmdbApiKey;
-            if (!string.IsNullOrWhiteSpace(overrideKey))
-            {
-                if (!_credentialLogged)
-                {
-                    _logger?.LogInformation("Using ShowOrganizer-configured TMDb credentials.");
-                    _credentialLogged = true;
-                }
-                return overrideKey.Trim();
-            }
-
-            var jellyfinKey = GetJellyfinTmdbApiKey();
-            if (!string.IsNullOrWhiteSpace(jellyfinKey))
-            {
-                if (!_credentialLogged)
-                {
-                    _logger?.LogInformation("Using Jellyfin TMDb credentials.");
-                    _credentialLogged = true;
-                }
-                return jellyfinKey.Trim();
-            }
-
             if (!_credentialLogged)
             {
-                _logger?.LogWarning("No usable TMDb API credentials are available. Episode-group lookups will fail.");
+                _logger?.LogInformation("Using ShowOrganizer-configured TMDb credentials.");
                 _credentialLogged = true;
             }
-
-            return null;
+            return overrideKey.Trim();
         }
 
-        private string? GetJellyfinTmdbApiKey()
+        var jellyfinKey = GetJellyfinTmdbApiKey();
+        if (!string.IsNullOrWhiteSpace(jellyfinKey))
         {
-            if (_pluginManager != null)
+            if (!_credentialLogged)
             {
-                try
-                {
-                    foreach (var localPlugin in _pluginManager.Plugins)
-                    {
-                        var instance = localPlugin.Instance;
-                        if (instance == null)
-                        {
-                            continue;
-                        }
+                _logger?.LogInformation("Using Jellyfin TMDb credentials.");
+                _credentialLogged = true;
+            }
+            return jellyfinKey.Trim();
+        }
 
-                        if (instance.Name.Contains("MovieDb", StringComparison.OrdinalIgnoreCase) ||
-                            instance.Name.Contains("TMDB", StringComparison.OrdinalIgnoreCase))
+        if (!_credentialLogged)
+        {
+            _logger?.LogWarning("No usable TMDb API credentials are available. Episode-group lookups will fail.");
+            _credentialLogged = true;
+        }
+
+        return null;
+    }
+
+    private string? GetJellyfinTmdbApiKey()
+    {
+        if (_pluginManager != null)
+        {
+            try
+            {
+                foreach (var localPlugin in _pluginManager.Plugins)
+                {
+                    var instance = localPlugin.Instance;
+                    if (instance == null)
+                    {
+                        continue;
+                    }
+
+                    if (instance.Name.Contains("MovieDb", StringComparison.OrdinalIgnoreCase) ||
+                        instance.Name.Contains("TMDB", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (instance is IHasPluginConfiguration configPlugin)
                         {
-                            if (instance is IHasPluginConfiguration configPlugin)
+                            var config = configPlugin.Configuration;
+                            if (config != null)
                             {
-                                var config = configPlugin.Configuration;
-                                if (config != null)
+                                var prop = config.GetType().GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase);
+                                if (prop != null)
                                 {
-                                    var prop = config.GetType().GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.IgnoreCase);
-                                    if (prop != null)
+                                    var val = prop.GetValue(config) as string;
+                                    if (!string.IsNullOrWhiteSpace(val))
                                     {
-                                        var val = prop.GetValue(config) as string;
-                                        if (!string.IsNullOrWhiteSpace(val))
-                                        {
-                                            return val;
-                                        }
+                                        return val;
                                     }
                                 }
                             }
+                        }
 
-                            var keyFromAsm = GetApiKeyFromAssembly(instance.GetType().Assembly);
-                            if (!string.IsNullOrWhiteSpace(keyFromAsm))
-                            {
-                                return keyFromAsm;
-                            }
+                        var keyFromAsm = GetApiKeyFromAssembly(instance.GetType().Assembly);
+                        if (!string.IsNullOrWhiteSpace(keyFromAsm))
+                        {
+                            return keyFromAsm;
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    _logger?.LogDebug(ex, "Error checking Jellyfin TMDb plugin configuration.");
-                }
-            }
-
-            try
-            {
-                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-                {
-                    var keyFromAsm = GetApiKeyFromAssembly(asm);
-                    if (!string.IsNullOrWhiteSpace(keyFromAsm))
-                    {
-                        return keyFromAsm;
-                    }
-                }
             }
             catch (Exception ex)
             {
-                _logger?.LogDebug(ex, "Error checking AppDomain assemblies for TMDb credentials.");
+                _logger?.LogDebug(ex, "Error checking Jellyfin TMDb plugin configuration.");
+            }
+        }
+
+        try
+        {
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                var keyFromAsm = GetApiKeyFromAssembly(asm);
+                if (!string.IsNullOrWhiteSpace(keyFromAsm))
+                {
+                    return keyFromAsm;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Error checking AppDomain assemblies for TMDb credentials.");
+        }
+
+        return null;
+    }
+
+    private static string? GetApiKeyFromAssembly(Assembly asm)
+    {
+        try
+        {
+            var type = asm.GetType("MediaBrowser.Providers.Plugins.Tmdb.TmdbUtils")
+                    ?? asm.GetType("MediaBrowser.Providers.Tmdb.TmdbUtils")
+                    ?? asm.GetTypes().FirstOrDefault(t => t.Name.Equals("TmdbUtils", StringComparison.OrdinalIgnoreCase));
+
+            if (type == null)
+            {
+                return null;
             }
 
+            var prop = type.GetProperty("ApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                    ?? type.GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+            if (prop != null)
+            {
+                var val = prop.GetValue(null) as string;
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    return val;
+                }
+            }
+
+            var field = type.GetField("ApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                     ?? type.GetField("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
+                     ?? type.GetField("API_KEY", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase);
+
+            if (field != null)
+            {
+                var val = field.GetValue(null) as string;
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    return val;
+                }
+            }
+        }
+        catch
+        {
+            // Ignore type load / reflection errors
+        }
+
+        return null;
+    }
+
+    public virtual async Task<TvGroupCollection?> GetTvEpisodeGroupsAsync(int tvShowId, string groupId, string? language, CancellationToken cancellationToken)
+    {
+        var normalizedLanguage = NormalizeLanguage(language);
+        var key = $"group-{tvShowId}-{groupId}-{normalizedLanguage}";
+
+        if (_memoryCache.TryGetValue(key, out TvGroupCollection? cachedCollection))
+        {
+            _logger?.LogDebug("ShowOrganizer: Cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
+            return cachedCollection;
+        }
+
+        var negKey = $"neg-{key}";
+        if (_negativeGroupCache.TryGetValue(negKey, out var expiryUtc))
+        {
+            if (DateTime.UtcNow < expiryUtc)
+            {
+                _logger?.LogDebug("ShowOrganizer: Negative cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
+                return null;
+            }
+            _negativeGroupCache.TryRemove(negKey, out _);
+        }
+
+        var client = GetClient();
+        if (client == null)
+        {
+            _logger?.LogDebug("ShowOrganizer: Skipping TMDb episode group retrieval for series {SeriesId}: No usable TMDb client.", tvShowId);
             return null;
         }
 
-        private static string? GetApiKeyFromAssembly(Assembly asm)
+        try
         {
-            try
-            {
-                var type = asm.GetType("MediaBrowser.Providers.Plugins.Tmdb.TmdbUtils")
-                        ?? asm.GetType("MediaBrowser.Providers.Tmdb.TmdbUtils")
-                        ?? asm.GetTypes().FirstOrDefault(t => t.Name.Equals("TmdbUtils", StringComparison.OrdinalIgnoreCase));
+            var fetchTask = _inFlightGroupRequests.GetOrAdd(key, k => FetchGroupFromApiAsync(client, tvShowId, groupId, normalizedLanguage, k, cancellationToken));
+            return await fetchTask.ConfigureAwait(false);
+        }
+        finally
+        {
+            _inFlightGroupRequests.TryRemove(key, out _);
+        }
+    }
 
-                if (type == null)
-                {
-                    return null;
-                }
+    protected virtual async Task<TvGroupCollection?> FetchGroupFromApiAsync(TMDbClient client, int tvShowId, string groupId, string? normalizedLanguage, string key, CancellationToken cancellationToken)
+    {
+        TvGroupCollection? collection;
+        bool requestExceptionThrown = false;
 
-                var prop = type.GetProperty("ApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
-                        ?? type.GetProperty("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase);
-
-                if (prop != null)
-                {
-                    var val = prop.GetValue(null) as string;
-                    if (!string.IsNullOrWhiteSpace(val))
-                    {
-                        return val;
-                    }
-                }
-
-                var field = type.GetField("ApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
-                         ?? type.GetField("TmdbApiKey", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase)
-                         ?? type.GetField("API_KEY", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.IgnoreCase);
-
-                if (field != null)
-                {
-                    var val = field.GetValue(null) as string;
-                    if (!string.IsNullOrWhiteSpace(val))
-                    {
-                        return val;
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore type load / reflection errors
-            }
-
+        try
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            collection = await client.GetTvEpisodeGroupsAsync(groupId, normalizedLanguage, cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger?.LogDebug("ShowOrganizer: TMDb episode group retrieval cancelled by caller for group {GroupId} series {SeriesId}.", groupId, tvShowId);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            requestExceptionThrown = true;
+            _logger?.LogError(ex, "ShowOrganizer: Failed to retrieve TMDb episode group {GroupId} for series {SeriesId}: Network or API exception.", groupId, tvShowId);
             return null;
         }
 
-        public virtual async Task<TvGroupCollection?> GetTvEpisodeGroupsAsync(int tvShowId, string groupId, string? language, CancellationToken cancellationToken)
+        if (collection?.Groups != null)
         {
-            var normalizedLanguage = NormalizeLanguage(language);
-            var key = $"group-{tvShowId}-{groupId}-{normalizedLanguage}";
+            _memoryCache.Set(key, collection, TimeSpan.FromHours(CacheDurationInHours));
 
-            if (_memoryCache.TryGetValue(key, out TvGroupCollection? cachedCollection))
-            {
-                _logger?.LogDebug("ShowOrganizer: Cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
-                return cachedCollection;
-            }
+            var rawName = collection.Name?.Trim();
+            var groupName = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim('"');
 
+            _logger?.LogDebug("ShowOrganizer: Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
+            return collection;
+        }
+
+        if (!requestExceptionThrown)
+        {
             var negKey = $"neg-{key}";
-            if (_negativeGroupCache.TryGetValue(negKey, out var expiryUtc))
+            _negativeGroupCache[negKey] = DateTime.UtcNow.AddMinutes(10);
+            if (_loggedNotFoundWarnings.TryAdd(negKey, true))
             {
-                if (DateTime.UtcNow < expiryUtc)
-                {
-                    _logger?.LogDebug("ShowOrganizer: Negative cache hit for TMDb episode group {GroupId} for series {SeriesId}.", groupId, tvShowId);
-                    return null;
-                }
-                _negativeGroupCache.TryRemove(negKey, out _);
-            }
-
-            var client = GetClient();
-            if (client == null)
-            {
-                _logger?.LogDebug("ShowOrganizer: Skipping TMDb episode group retrieval for series {SeriesId}: No usable TMDb client.", tvShowId);
-                return null;
-            }
-
-            try
-            {
-                var fetchTask = _inFlightGroupRequests.GetOrAdd(key, k => FetchGroupFromApiAsync(client, tvShowId, groupId, normalizedLanguage, k, cancellationToken));
-                return await fetchTask.ConfigureAwait(false);
-            }
-            finally
-            {
-                _inFlightGroupRequests.TryRemove(key, out _);
+                _logger?.LogWarning("ShowOrganizer: TMDb Episode Group '{GroupId}' was not found for series TMDb {SeriesId}.", groupId, tvShowId);
             }
         }
 
-        protected virtual async Task<TvGroupCollection?> FetchGroupFromApiAsync(TMDbClient client, int tvShowId, string groupId, string? normalizedLanguage, string key, CancellationToken cancellationToken)
+        return null;
+    }
+
+    public virtual async Task<TvEpisode?> GetTvEpisodeAsync(int tvShowId, int seasonNumber, int episodeNumber, string? language, string? imageLanguages, string? countryCode, CancellationToken cancellationToken)
+    {
+        var client = GetClient();
+        if (client == null)
         {
-            TvGroupCollection? collection = null;
-            bool requestExceptionThrown = false;
-
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                collection = await client.GetTvEpisodeGroupsAsync(groupId, normalizedLanguage, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                _logger?.LogDebug("ShowOrganizer: TMDb episode group retrieval cancelled by caller for group {GroupId} series {SeriesId}.", groupId, tvShowId);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                requestExceptionThrown = true;
-                _logger?.LogError(ex, "ShowOrganizer: Failed to retrieve TMDb episode group {GroupId} for series {SeriesId}: Network or API exception.", groupId, tvShowId);
-                return null;
-            }
-
-            if (collection != null && collection.Groups != null)
-            {
-                _memoryCache.Set(key, collection, TimeSpan.FromHours(CacheDurationInHours));
-
-                var rawName = collection.Name?.Trim();
-                var groupName = string.IsNullOrWhiteSpace(rawName) ? string.Empty : rawName.Trim('"');
-
-                _logger?.LogDebug("ShowOrganizer: Retrieved TMDb episode group {GroupId} for series {SeriesId}: {GroupName} ({GroupCount} groups).", groupId, tvShowId, groupName, collection.Groups.Count);
-                return collection;
-            }
-
-            if (!requestExceptionThrown)
-            {
-                var negKey = $"neg-{key}";
-                _negativeGroupCache[negKey] = DateTime.UtcNow.AddMinutes(10);
-                if (_loggedNotFoundWarnings.TryAdd(negKey, true))
-                {
-                    _logger?.LogWarning("ShowOrganizer: TMDb Episode Group '{GroupId}' was not found for series TMDb {SeriesId}.", groupId, tvShowId);
-                }
-            }
-
             return null;
         }
 
-        public virtual async Task<TvEpisode?> GetTvEpisodeAsync(int tvShowId, int seasonNumber, int episodeNumber, string? language, string? imageLanguages, string? countryCode, CancellationToken cancellationToken)
+        var normalizedLanguage = NormalizeLanguage(language);
+
+        try
         {
+            return await client.GetTvEpisodeAsync(
+                tvShowId,
+                seasonNumber,
+                episodeNumber,
+                language: normalizedLanguage,
+                includeImageLanguage: imageLanguages,
+                extraMethods: TvEpisodeMethods.Credits | TvEpisodeMethods.Images | TvEpisodeMethods.ExternalIds | TvEpisodeMethods.Videos,
+                cancellationToken: cancellationToken).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger?.LogDebug("ShowOrganizer: TMDb episode retrieval cancelled by caller for series {SeriesId} S{Season:02}E{Episode:02}.", tvShowId, seasonNumber, episodeNumber);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogError(ex, "ShowOrganizer: Failed to retrieve TMDb episode for series {SeriesId} S{Season:02}E{Episode:02}.", tvShowId, seasonNumber, episodeNumber);
+            return null;
+        }
+    }
+
+    public virtual async Task<string?> GetProfileUrlAsync(string? path, CancellationToken cancellationToken = default)
+    {
+        return await GetImageUrlAsync("original", path, cancellationToken).ConfigureAwait(false);
+    }
+
+    public virtual async Task<string?> GetImageUrlAsync(string size, string? path, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+
+        var cleanPath = path.TrimStart('/');
+        var cleanSize = string.IsNullOrWhiteSpace(size) ? "original" : size;
+
+        try
+        {
+            await EnsureClientConfigAsync(cancellationToken).ConfigureAwait(false);
+
             var client = GetClient();
-            if (client == null)
+            if (client != null && client.HasConfig)
             {
-                return null;
-            }
-
-            var normalizedLanguage = NormalizeLanguage(language);
-            
-            try
-            {
-                return await client.GetTvEpisodeAsync(
-                    tvShowId,
-                    seasonNumber,
-                    episodeNumber,
-                    language: normalizedLanguage,
-                    includeImageLanguage: imageLanguages,
-                    extraMethods: TvEpisodeMethods.Credits | TvEpisodeMethods.Images | TvEpisodeMethods.ExternalIds | TvEpisodeMethods.Videos,
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                _logger?.LogDebug("ShowOrganizer: TMDb episode retrieval cancelled by caller for series {SeriesId} S{Season:02}E{Episode:02}.", tvShowId, seasonNumber, episodeNumber);
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogError(ex, "ShowOrganizer: Failed to retrieve TMDb episode for series {SeriesId} S{Season:02}E{Episode:02}.", tvShowId, seasonNumber, episodeNumber);
-                return null;
-            }
-        }
-
-        public virtual async Task<string?> GetProfileUrlAsync(string? path, CancellationToken cancellationToken = default)
-        {
-            return await GetImageUrlAsync("original", path, cancellationToken).ConfigureAwait(false);
-        }
-
-        public virtual async Task<string?> GetImageUrlAsync(string size, string? path, CancellationToken cancellationToken = default)
-        {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return null;
-            }
-
-            var cleanPath = path.TrimStart('/');
-            var cleanSize = string.IsNullOrWhiteSpace(size) ? "original" : size;
-
-            try
-            {
-                await EnsureClientConfigAsync(cancellationToken).ConfigureAwait(false);
-
-                var client = GetClient();
-                if (client != null && client.HasConfig)
+                var url = client.GetImageUrl(cleanSize, path, true);
+                if (url != null)
                 {
-                    var url = client.GetImageUrl(cleanSize, path, true);
-                    if (url != null)
-                    {
-                        return url.ToString();
-                    }
+                    return url.ToString();
                 }
             }
-            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                _logger?.LogDebug(ex, "Failed to resolve TMDb image URL for path {Path}.", path);
-            }
-
-            return $"{TmdbImageBaseUrl}{cleanSize}/{cleanPath}";
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger?.LogDebug(ex, "Failed to resolve TMDb image URL for path {Path}.", path);
         }
 
-        public string? GetProfileUrl(string? path)
+        return $"{TmdbImageBaseUrl}{cleanSize}/{cleanPath}";
+    }
+
+    public string? GetProfileUrl(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
         {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return null;
-            }
-            return $"{TmdbImageBaseUrl}original/{path.TrimStart('/')}";
+            return null;
+        }
+        return $"{TmdbImageBaseUrl}original/{path.TrimStart('/')}";
+    }
+
+    public string? GetImageUrl(string size, string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+        var cleanSize = string.IsNullOrWhiteSpace(size) ? "original" : size;
+        return $"{TmdbImageBaseUrl}{cleanSize}/{path.TrimStart('/')}";
+    }
+
+    private static string? NormalizeLanguage(string? language)
+    {
+        if (string.IsNullOrEmpty(language))
+        {
+            return language;
         }
 
-        public string? GetImageUrl(string size, string? path)
+        var index = language.IndexOf('-', StringComparison.Ordinal);
+        return index == -1 ? language : language[..index];
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (disposing)
         {
-            if (string.IsNullOrWhiteSpace(path))
-            {
-                return null;
-            }
-            var cleanSize = string.IsNullOrWhiteSpace(size) ? "original" : size;
-            return $"{TmdbImageBaseUrl}{cleanSize}/{path.TrimStart('/')}";
-        }
-
-        private static string? NormalizeLanguage(string? language)
-        {
-            if (string.IsNullOrEmpty(language))
-            {
-                return language;
-            }
-
-            var index = language.IndexOf('-', StringComparison.Ordinal);
-            if (index == -1)
-            {
-                return language;
-            }
-
-            return language.Substring(0, index);
-        }
-
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                _tmDbClient?.Dispose();
-                _logger?.LogDebug("ShowOrganizer: TmdbClientService disposed.");
-            }
+            _tmDbClient?.Dispose();
+            _logger?.LogDebug("ShowOrganizer: TmdbClientService disposed.");
         }
     }
 }

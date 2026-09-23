@@ -1,6 +1,6 @@
 # ShowOrganizer Technical Architecture & System Design
 
-This document serves as the canonical technical reference for ShowOrganizer, a metadata provider plugin for Jellyfin Server v10.11.x (target ABI `10.11.0.0`, verified with Jellyfin `10.11.11`). It documents system design, indexing invariants, provider result semantics, credential priority, and concurrency controls.
+This document serves as the canonical technical reference for ShowOrganizer, a metadata provider plugin for Jellyfin Server v12.x (target ABI `12.0.0.0`, .NET 10.0). For Jellyfin Server 10.11.x (.NET 9.0), refer to ShowOrganizer 1.0.x (target ABI `10.11.0.0`). It documents system design, indexing invariants, provider result semantics, credential priority, and concurrency controls.
 
 ---
 
@@ -272,8 +272,8 @@ Jellyfin automatically parses `<showorganizerid>` into `Series.ProviderIds["Show
 
 ## O. Jellyfin Version & API Assumptions
 
-* **Target ABI**: `10.11.0.0`
-* **Verified Runtime**: Jellyfin `10.11.11` (.NET 9.0)
+* **Target ABI**: `12.0.0.0`
+* **Verified Runtime**: Jellyfin `12.x` (.NET 10.0)
 * **Core Interfaces Utilized**:
   * `MediaBrowser.Controller.Providers.IExternalId`
   * `MediaBrowser.Controller.Providers.IRemoteMetadataProvider<TItemType, TLookupInfo>`

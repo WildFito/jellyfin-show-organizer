@@ -3,15 +3,14 @@ using MediaBrowser.Controller;
 using MediaBrowser.Controller.Plugins;
 using Microsoft.Extensions.DependencyInjection;
 
-namespace Jellyfin.Plugin.ShowOrganizer
+namespace Jellyfin.Plugin.ShowOrganizer;
+
+public class PluginServiceRegistrator : IPluginServiceRegistrator
 {
-    public class PluginServiceRegistrator : IPluginServiceRegistrator
+    public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
     {
-        public void RegisterServices(IServiceCollection serviceCollection, IServerApplicationHost applicationHost)
-        {
-            serviceCollection.AddTransient<ShowOrganizerEligibilityEvaluator>();
-            serviceCollection.AddTransient<TmdbClientService>();
-            serviceCollection.AddTransient<TmdbExactOrderResolver>();
-        }
+        serviceCollection.AddTransient<ShowOrganizerEligibilityEvaluator>();
+        serviceCollection.AddTransient<TmdbClientService>();
+        serviceCollection.AddTransient<TmdbExactOrderResolver>();
     }
 }

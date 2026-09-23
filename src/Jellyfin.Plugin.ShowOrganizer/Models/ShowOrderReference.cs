@@ -1,48 +1,42 @@
 using System;
 using System.Diagnostics.CodeAnalysis;
 
-namespace Jellyfin.Plugin.ShowOrganizer.Models
+namespace Jellyfin.Plugin.ShowOrganizer.Models;
+
+public class ShowOrderReference(string provider, string orderId)
 {
-    public class ShowOrderReference
+    public string Provider { get; } = provider;
+
+    public string OrderId { get; } = orderId;
+
+    public static bool TryParse(string? value, [NotNullWhen(true)] out ShowOrderReference? result)
     {
-        public ShowOrderReference(string provider, string orderId)
+        result = null;
+        if (string.IsNullOrWhiteSpace(value))
         {
-            Provider = provider;
-            OrderId = orderId;
+            return false;
         }
 
-        public string Provider { get; }
-        public string OrderId { get; }
+        var cleanValue = value.Trim();
 
-        public static bool TryParse(string? value, [NotNullWhen(true)] out ShowOrderReference? result)
+        if (cleanValue.Contains(':', StringComparison.Ordinal))
         {
-            result = null;
-            if (string.IsNullOrWhiteSpace(value))
+            var parts = cleanValue.Split(':', 2);
+            var provider = parts[0].Trim().ToLowerInvariant();
+            var orderId = parts[1].Trim();
+
+            if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(orderId))
             {
                 return false;
             }
 
-            var cleanValue = value.Trim();
-
-            if (cleanValue.Contains(':', StringComparison.Ordinal))
-            {
-                var parts = cleanValue.Split(':', 2);
-                var provider = parts[0].Trim().ToLowerInvariant();
-                var orderId = parts[1].Trim();
-
-                if (string.IsNullOrEmpty(provider) || string.IsNullOrEmpty(orderId))
-                {
-                    return false;
-                }
-
-                result = new ShowOrderReference(provider, orderId);
-                return true;
-            }
-
-            result = new ShowOrderReference("tmdb", cleanValue);
+            result = new ShowOrderReference(provider, orderId);
             return true;
         }
 
-        public override string ToString() => $"{Provider}:{OrderId}";
+        result = new ShowOrderReference("tmdb", cleanValue);
+        return true;
     }
+
+    public override string ToString() => $"{Provider}:{OrderId}";
 }

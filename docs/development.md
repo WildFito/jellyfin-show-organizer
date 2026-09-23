@@ -4,7 +4,7 @@ This guide describes how to compile, test, deploy, and debug the ShowOrganizer p
 
 ## Prerequisites
 
-* **.NET 9.0 SDK**: Make sure you have the Net 9 SDK installed.
+* **.NET 10.0 SDK**: Make sure you have the .NET 10 SDK installed.
 * **Jellyfin NuGet Feeds**: The plugin references official Jellyfin assemblies which are retrieved from the default NuGet package source.
 
 ## Building the Project
@@ -37,7 +37,7 @@ To package the plugin zip and run the automated release package verifier locally
 
 ```bash
 python -m jprm plugin build . --output=./artifacts
-dotnet run --project tools/ReleaseVerifier/ReleaseVerifier.csproj "artifacts/showorganizer_1.0.0.0.zip" build.yaml
+dotnet run --project tools/ReleaseVerifier/ReleaseVerifier.csproj "artifacts/showorganizer_1.1.0.0.zip" build.yaml
 ```
 
 ## Local Deployment (Docker/UNRAID)
@@ -45,7 +45,7 @@ dotnet run --project tools/ReleaseVerifier/ReleaseVerifier.csproj "artifacts/sho
 To install the plugin manually into a Jellyfin server running in a Docker container (such as on UNRAID):
 
 1. Compile the plugin in Release mode.
-2. Locate the output assembly file `Jellyfin.Plugin.ShowOrganizer.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net9.0/`.
+2. Locate the output assembly file `Jellyfin.Plugin.ShowOrganizer.dll` in `src/Jellyfin.Plugin.ShowOrganizer/bin/Release/net10.0/`.
 3. Create a folder named `ShowOrganizer` inside your Jellyfin server's `plugins/` directory:
    ```bash
    mkdir -p /path/to/jellyfin/config/plugins/ShowOrganizer

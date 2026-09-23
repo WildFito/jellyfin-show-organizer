@@ -2,75 +2,78 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Jellyfin.Plugin.ShowOrganizer.Models;
+using Microsoft.Extensions.Logging;
 using TMDbLib.Objects.TvShows;
 
-using Microsoft.Extensions.Logging;
+namespace Jellyfin.Plugin.ShowOrganizer.Services;
 
-namespace Jellyfin.Plugin.ShowOrganizer.Services
+public class TmdbExactOrderResolver(
+    TmdbClientService tmdbClientService,
+    ILogger<TmdbExactOrderResolver>? logger = null) : IDisposable
 {
-    public class TmdbExactOrderResolver : IDisposable
+    private readonly TmdbClientService _tmdbClientService = tmdbClientService;
+    private readonly ILogger<TmdbExactOrderResolver>? _logger = logger;
+
+    public virtual async Task<(int SeasonNumber, int EpisodeNumber)> ResolveCoordinatesAsync(
+        int seriesTmdbId,
+        int customSeasonNumber,
+        int customEpisodeNumber,
+        ShowOrderReference orderRef,
+        string? language,
+        CancellationToken cancellationToken)
     {
-        private readonly TmdbClientService _tmdbClientService;
-        private readonly ILogger<TmdbExactOrderResolver>? _logger;
-
-        public TmdbExactOrderResolver(TmdbClientService tmdbClientService)
-            : this(tmdbClientService, null)
+        if (orderRef.Provider != "tmdb" || customSeasonNumber <= 0 || customEpisodeNumber <= 0)
         {
-        }
-
-        public TmdbExactOrderResolver(TmdbClientService tmdbClientService, ILogger<TmdbExactOrderResolver>? logger)
-        {
-            _tmdbClientService = tmdbClientService;
-            _logger = logger;
-            _logger?.LogDebug("ShowOrganizer: TmdbExactOrderResolver created.");
-        }
-
-        public virtual async Task<(int SeasonNumber, int EpisodeNumber)> ResolveCoordinatesAsync(
-            int seriesTmdbId,
-            int customSeasonNumber,
-            int customEpisodeNumber,
-            ShowOrderReference orderRef,
-            string? language,
-            CancellationToken cancellationToken)
-        {
-            if (orderRef.Provider != "tmdb" || customSeasonNumber <= 0 || customEpisodeNumber <= 0)
-            {
-                return (-1, -1);
-            }
-
-            var groupCollection = await _tmdbClientService.GetTvEpisodeGroupsAsync(seriesTmdbId, orderRef.OrderId, language, cancellationToken).ConfigureAwait(false);
-            if (groupCollection?.Groups == null)
-            {
-                return (-1, -1);
-            }
-
-            var season = groupCollection.Groups.Find(s => s.Order == customSeasonNumber);
-            if (season?.Episodes == null)
-            {
-                return (-1, -1);
-            }
-
-            var episode = season.Episodes.Find(e => e.Order == customEpisodeNumber - 1);
-            if (episode != null)
-            {
-                return (episode.SeasonNumber, episode.EpisodeNumber);
-            }
-
             return (-1, -1);
         }
 
-        public void Dispose()
+        var groupCollection = await _tmdbClientService.GetTvEpisodeGroupsAsync(seriesTmdbId, orderRef.OrderId, language, cancellationToken).ConfigureAwait(false);
+        if (groupCollection?.Groups == null)
         {
-            Dispose(true);
-            GC.SuppressFinalize(this);
+            return (-1, -1);
         }
 
-        protected virtual void Dispose(bool disposing)
+        TvGroup? season = null;
+        var groups = groupCollection.Groups;
+        for (int i = 0; i < groups.Count; i++)
         {
-            if (disposing)
+            if (groups[i].Order == customSeasonNumber)
             {
-                _logger?.LogDebug("ShowOrganizer: TmdbExactOrderResolver disposed.");
+                season = groups[i];
+                break;
             }
+        }
+
+        if (season?.Episodes == null)
+        {
+            return (-1, -1);
+        }
+
+        var targetOrder = customEpisodeNumber - 1;
+        var episodes = season.Episodes;
+        for (int i = 0; i < episodes.Count; i++)
+        {
+            var ep = episodes[i];
+            if (ep.Order == targetOrder)
+            {
+                return (ep.SeasonNumber, (int)ep.EpisodeNumber);
+            }
+        }
+
+        return (-1, -1);
+    }
+
+    public void Dispose()
+    {
+        Dispose(true);
+        GC.SuppressFinalize(this);
+    }
+
+    protected virtual void Dispose(bool disposing)
+    {
+        if (disposing)
+        {
+            _logger?.LogDebug("ShowOrganizer: TmdbExactOrderResolver disposed.");
         }
     }
 }
